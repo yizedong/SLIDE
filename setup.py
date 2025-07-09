@@ -3,7 +3,7 @@
 Setup script for LSST DECam Image Subtraction Package
 """
 
-from setuptools import setup, find_packages
+from setuptools import setup
 import os
 
 # Read the README file
@@ -14,18 +14,20 @@ def read_readme():
             return f.read()
     return "LSST DECam Image Subtraction Package"
 
-
 setup(
     name="lsst-decam-subtraction",
     version="0.1.0",
     author="Yize Dong",
     author_email="yize.dong@outlook.com",
-        description="Image subtraction package for LSST DECam data",
+    description="Image subtraction package for LSST DECam data",
+    long_description=read_readme(),
+    long_description_content_type="text/markdown",
     install_requires=[
         'numpy>=1.20.0', 'scipy>=1.7.0', 'matplotlib>=3.3.0',
         'astropy>=5.0.0', 'photutils>=1.4.0', 'reproject>=0.8.0', 'sep>=1.1.0',
         'requests>=2.25.0', 'pyvo>=1.3.0', 'astroquery>=0.4.6', 'Pillow>=8.0.0'
     ],
     packages=['lsst_decam_subtraction'],
+    python_requires='>=3.10',
     entry_points={'console_scripts': ['lsst-decam-subtract=lsst_decam_subtraction.main:main']}
 )
