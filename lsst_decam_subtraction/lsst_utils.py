@@ -11,9 +11,18 @@ from astropy.wcs.utils import skycoord_to_pixel, pixel_to_skycoord
 from astropy.nddata import CCDData
 from astropy.io import fits
 from astropy.wcs import WCS
+from photutils.aperture import SkyCircularAnnulus, SkyCircularAperture, ApertureStats
+from photutils.background import Background2D
+from photutils.psf import ImagePSF
+from astropy.table import QTable
+from photutils.psf import IterativePSFPhotometry
+from photutils.background import LocalBackground, MMMBackground
+from photutils.detection import DAOStarFinder
+from photutils.psf import PSFPhotometry
+from astropy.nddata import Cutout2D
 
 
-def query_lsst_visits(ra, dec, band, time1, time2):
+def query_lsst_visits(butler, ra, dec, band, time1, time2):
     """
     Query LSST Butler for visit images within a time range and sky region.
     
@@ -37,7 +46,9 @@ def query_lsst_visits(ra, dec, band, time1, time2):
     list
         Dataset references matching the criteria
     """
-    butler = Butler("dp1", collections="LSSTComCam/DP1")
+    #butler = Butler("dp1", collections="LSSTComCam/DP1")
+    time1 = Time(time1, format="isot", scale="tai")
+    time2 = Time(time2, format="isot", scale="tai")
     timespan = Timespan(time1, time2)
     
     dataset_refs = butler.query_datasets("visit_image",
@@ -56,6 +67,10 @@ def lsst_visit_to_ccddata(visit_image, saveas=None):
     ccddata = CCDData(data, wcs=wcs, unit='adu')
     if saveas is not None:
         visit_image.writeFits(saveas)
+    return ccddata
+
+def lsst_cutout_to_ccddata(cutout, saveas=None):
+    ccddata = CCDData(cutout.data, wcs=cutout.wcs, unit='adu')
     return ccddata
 
 def lsst_visit_to_psf(visit_image, ra, dec, saveas=None):
@@ -106,3 +121,68 @@ def astropy_world_to_pixel(ra, dec, wcs):
 def astropy_pixel_to_world(x, y, wcs):
     skycoord = pixel_to_skycoord(x, y, wcs, origin=0)
     return skycoord.ra.deg, skycoord.dec.deg
+
+
+def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
+    """
+    Create a Cutout2D that contains the original RA/Dec, shifting inward if near the edge.
+
+    Parameters:
+        data (2D ndarray): Image array.
+        wcs (astropy.wcs.WCS): WCS for the image.
+        ra, dec (float): Center coordinates in degrees.
+        cutout_size (tuple): Desired cutout size in pixels.
+
+    Returns:
+        Cutout2D object.
+    """
+    if isinstance(cutout_size, (int, float)):
+        cutout_size = (int(cutout_size), int(cutout_size))
+    else:
+        cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
+
+    data = visit_image.image.array
+    header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
+    wcs = WCS(header)
+        
+    xcen, ycen = astropy_world_to_pixel(ra, dec, wcs)
+
+    # Half size
+    half_x = cutout_size[0] // 2
+    half_y = cutout_size[1] // 2
+    ny, nx = data.shape
+
+    # Shift center inward if near edges
+    xcen = np.clip(xcen, half_x, nx - half_x)
+    ycen = np.clip(ycen, half_y, ny - half_y)
+
+    pixel_center = (xcen, ycen)
+    cutout = Cutout2D(data, position=pixel_center, size=cutout_size, wcs=wcs, mode='trim')
+
+    return cutout
+
+
+
+def forced_phot(ra, dec, image, wcs, psf_data):
+    xx, yy = np.mgrid[:psf_data.shape[0], :psf_data.shape[1]]
+    psf_model = ImagePSF(psf_data/np.sum(psf_data), x_0=psf_data.shape[0]/2, y_0=psf_data.shape[1]/2, flux=1)
+    bkgstat = MMMBackground()
+    localbkg_estimator = LocalBackground(5, 10, bkgstat)
+    init_params = QTable()
+    _x, _y = astropy_world_to_pixel(ra, dec, wcs)
+    init_params['x'] = [_x]
+    init_params['y'] = [_y]
+    
+    fit_shape = (5,5)
+    psfphot = PSFPhotometry(psf_model, fit_shape,
+                            aperture_radius=5,
+                            localbkg_estimator=None)
+    phot = psfphot(image, init_params=init_params)
+
+    flux_njy = phot[0]['flux_fit'].value 
+    flux_err = phot[0]['flux_err'].value
+    mag = -2.5 * np.log10(flux_njy / 3631e9)
+    magerr = (2.5 / np.log(10)) * (flux_err / flux_njy)
+    upper_limit = -2.5 * np.log10(flux_err * 5 / 3631e9)
+
+    return flux_njy, flux_err, mag, mag_err, upper_limit
