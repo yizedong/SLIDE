@@ -1,4 +1,3 @@
-import imp
 from lsst.daf.butler import Butler, Timespan
 from lsst.rsp import get_tap_service
 import lsst.geom
