@@ -1,20 +1,20 @@
 # LSST DECam Image Subtraction Package
 
-A Python package for performing image subtraction on LSST DECam data, including PSF modeling, reference image downloading, and difference image analysis.
+This Python package is for performing image subtraction on LSST data with DECam templates.
 
 ## Installation
 
 ### Prerequisites
 
-This package requires several dependencies. Install them using pip:
+Most dependencies of this package has been installed on the Rubin Science Platform. If you miss any packages, you can install them as following:
 
 ```bash
-pip install astropy numpy matplotlib scipy sep photutils reproject requests pyvo astroquery
+pip install --user reproject reproject 
 ```
 
 ### PyZOGY
 
-This package depends on PyZOGY for image subtraction:
+This package depends on PyZOGY for image subtraction (https://github.com/dguevel/PyZOGY/tree/master):
 
 ```bash
 # Install PyZOGY from the local directory
@@ -24,16 +24,10 @@ pip install --user -e .
 
 ## Usage
 
-### Command Line Interface
-
-The package provides a command-line interface for easy use:
-
-```bash
-python -m lsst_decam_subtraction.subtraction --targimg --ra 58.335 --dec -48.750 --download_DES_temp
-```
+Please see the example.ipynb for how to use this package.
 
 
 
 ## Citation
 
-If you use this package in your research, please cite:
+If you use this package in your research, please cite: Dong et al. in prep

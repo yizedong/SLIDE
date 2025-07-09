@@ -147,8 +147,8 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, sci_header=Non
 
     return refdata_aligned, normalized_difference, sci_psf.data
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False,
-                        cutout_size=1000):
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False,
+                        cutout_size=1000, save_intermediate=False):
     """
     Perform image subtraction on LSST DECam data.
     """
@@ -182,6 +182,9 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, template_filename=None,
     _, sci_stars = make_psf(_scidata, catalog, show=show, boxsize=25)
     scidata = _scidata.copy()
     refine_wcs(scidata.wcs, sci_stars, catalog, use_sep=False)
+    if save_intermediate and science_filename is not None:
+        _science_filename = os.path.join(workdir, science_filename)
+        scidata.write(_science_filename, overwrite=True)
     logger.info(f"Using {len(catalog)} stars for WCS refinement")
 
     # Read science image PSF

@@ -142,6 +142,7 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
         cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
 
     data = visit_image.image.array
+    #mask = 
     header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     wcs = WCS(header)
         
@@ -185,4 +186,4 @@ def forced_phot(ra, dec, image, wcs, psf_data):
     magerr = (2.5 / np.log(10)) * (flux_err / flux_njy)
     upper_limit = -2.5 * np.log10(flux_err * 5 / 3631e9)
 
-    return flux_njy, flux_err, mag, mag_err, upper_limit
+    return flux_njy, flux_err, mag, magerr, upper_limit

@@ -4,7 +4,7 @@ Image processing utilities for LSST DECam image subtraction.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive
 from astropy.io import fits
 from astropy.nddata import CCDData, NDData
 from astropy.wcs import WCS, _wcs
@@ -225,7 +225,9 @@ def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, order='bicubic'):
     refdatas_reprojected = []
     refdata_foot = np.zeros(shape, float)
     for data in refdatas:
-        reprojected, foot = reproject_interp((data.data, data.wcs), wcs, shape, order=order)
+        #reprojected, foot = reproject_interp((data.data, data.wcs), wcs, shape, order=order)
+        reprojected, foot = reproject_adaptive((data.data, data.wcs), wcs, shape, conserve_flux=True)
+        
         refdatas_reprojected.append(reprojected)
         refdata_foot += foot
 
