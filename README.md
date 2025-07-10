@@ -26,7 +26,7 @@ pip install --user -e .
 ### Install lsst_decam_subtraction
 
 ```bash
-# Install PyZOGY from the local directory
+# Install lsst_decam_subtraction from the local directory
 git clone https://github.com/yizedong/lsst_decam_subtraction.git
 cd lsst_decam_subtraction
 pip install --user -e .
