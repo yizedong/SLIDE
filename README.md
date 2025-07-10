@@ -1,6 +1,6 @@
 # LSST DECam Image Subtraction Package
 
-This Python package is for performing image subtraction on LSST data with DECam templates. The package is based on the PyZOGY tutorial written by Griffin Hosseinzadeh: https://github.com/griffin-h/image_subtraction
+This Python package performs image subtraction on LSST data using DECam templates. It is designed to run directly on the Rubin Science Platform and is based on the PyZOGY tutorial by Griffin Hosseinzadeh: https://github.com/griffin-h/image_subtraction
 
 ## Installation
 
@@ -9,7 +9,7 @@ This Python package is for performing image subtraction on LSST data with DECam 
 Most dependencies of this package has been installed on the Rubin Science Platform. If you miss any packages, you can install them as following:
 
 ```bash
-pip install --user reproject reproject 
+pip install --user reproject
 ```
 
 ### PyZOGY
@@ -18,6 +18,7 @@ This package depends on PyZOGY for image subtraction (https://github.com/dguevel
 
 ```bash
 # Install PyZOGY from the local directory
+git clone https://github.com/dguevel/PyZOGY.git
 cd PyZOGY
 pip install --user -e .
 ```
