@@ -1,5 +1,5 @@
 """
-Image processing utilities for LSST DECam image subtraction.
+Image processing utilities.
 """
 
 import numpy as np
@@ -14,7 +14,9 @@ from astropy.coordinates import SkyCoord
 from astropy.wcs.utils import skycoord_to_pixel
 import scipy.optimize
 import warnings
-
+from astropy.wcs.utils import fit_wcs_from_points
+import sep
+from .lsst_utils import astropy_world_to_pixel
 
 def read_with_datasec(filename, hdu=0):
     """
@@ -66,7 +68,7 @@ def get_ccd_bbox(ccddata):
     return ra_min, dec_min, ra_max, dec_max
 
 
-def make_psf(data, catalog, show=False, boxsize=25):
+def make_psf(data, catalog, show=False, boxsize=25, oversampling=1, center_accuracy=0.001):
     """
     Create PSF model from catalog stars.
     
@@ -86,15 +88,15 @@ def make_psf(data, catalog, show=False, boxsize=25):
     tuple
         (epsf, fitted_stars)
     """
-    catalog = catalog.copy()
-    coords = SkyCoord(catalog['ra'], catalog['dec'], unit='deg')
-    catalog['x'], catalog['y'] = skycoord_to_pixel(coords, data.wcs, origin=0)
+    _catalog = catalog.copy()
+    coords = SkyCoord(_catalog['ra'], _catalog['dec'], unit='deg')
+    _catalog['x'], _catalog['y'] = skycoord_to_pixel(coords, data.wcs, origin=0)
     
     bkg = np.nanmedian(data.data)
     nddata = NDData(data.data - bkg)
 
-    stars = extract_stars(nddata, catalog, size=boxsize)
-    epsf_builder = EPSFBuilder(oversampling=1)
+    stars = extract_stars(nddata, _catalog, size=boxsize)
+    epsf_builder = EPSFBuilder(oversampling=oversampling, center_accuracy=center_accuracy)
     epsf, fitted_stars = epsf_builder(stars)
     
     if show:
@@ -104,6 +106,27 @@ def make_psf(data, catalog, show=False, boxsize=25):
 
     return epsf, fitted_stars
 
+def find_catalog_stars(image, wcs, catalog):
+    try:
+        data = image.astype(np.float32)
+    except:
+        data = image.byteswap().newbyteorder()
+    bkg = sep.Background(data)
+    data_sub = data - bkg
+
+    # 2. Extract all sources
+    sources = sep.extract(data_sub, thresh=1.5, err=bkg.globalrms)
+
+    known_x, known_y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], wcs)
+
+    matched_sources = []
+    for x0, y0 in zip(known_x, known_y):
+        distances = np.hypot(sources['x'] - x0, sources['y'] - y0)
+        closest_idx = np.argmin(distances)
+        matched_sources.append(sources[closest_idx])
+
+    matched_sources = np.array(matched_sources)
+    return matched_sources
 
 def plot_stars(stars):
     """
@@ -138,6 +161,7 @@ def update_wcs(wcs, p):
         wcs.wcs.cd = wcs.wcs.cd @ np.array([[c, -s], [s, c]]) * p[3]
     if wcs.wcs.has_pc():
         wcs.wcs.pc = wcs.wcs.pc @ np.array([[c, -s], [s, c]]) * p[3]
+
 
 
 def wcs_offset(p, radec, xy, origwcs):
@@ -199,6 +223,14 @@ def refine_wcs(wcs, stars, catalog, use_sep=False):
     print(res)
     update_wcs(wcs, res.x)
 
+def refine_wcs_astropy(image, wcs, catalog, projection='TAN'):
+    sky_coords = SkyCoord(ra=catalog['ra'], dec=catalog['dec'])
+    matched_sources = find_catalog_stars(image, wcs, catalog)
+
+    # matched pixel positions and sky positions
+    new_wcs = fit_wcs_from_points(xy=(matched_sources['x'], matched_sources['y']), world_coords=sky_coords, projection=projection)
+    return new_wcs
+    
 
 def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, order='bicubic'):
     """

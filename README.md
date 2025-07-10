@@ -1,6 +1,6 @@
 # LSST DECam Image Subtraction Package
 
-This Python package is for performing image subtraction on LSST data with DECam templates.
+This Python package is for performing image subtraction on LSST data with DECam templates. The package is based on the PyZOGY tutorial written by Griffin Hosseinzadeh: https://github.com/griffin-h/image_subtraction
 
 ## Installation
 

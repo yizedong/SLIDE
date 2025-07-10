@@ -113,13 +113,13 @@ def lsst_pixel_to_world(x, y, visit_image):
         dec = [c.getDec().asDegrees() for c in sky_coords]
     return ra, dec
 
-def astropy_world_to_pixel(ra, dec, wcs):
+def astropy_world_to_pixel(ra, dec, wcs, origin = 0):
     coord = SkyCoord(ra, dec, unit='deg')
-    x, y = skycoord_to_pixel(coord, wcs, origin=0)
+    x, y = skycoord_to_pixel(coord, wcs, origin=origin)
     return x, y
 
-def astropy_pixel_to_world(x, y, wcs):
-    skycoord = pixel_to_skycoord(x, y, wcs, origin=0)
+def astropy_pixel_to_world(x, y, wcs, origin=0):
+    skycoord = pixel_to_skycoord(x, y, wcs, origin=origin)
     return skycoord.ra.deg, skycoord.dec.deg
 
 
@@ -180,8 +180,8 @@ def forced_phot(ra, dec, image, wcs, psf_data):
                             localbkg_estimator=None)
     phot = psfphot(image, init_params=init_params)
 
-    flux_njy = phot[0]['flux_fit'].value 
-    flux_err = phot[0]['flux_err'].value
+    flux_njy = phot[0]['flux_fit']
+    flux_err = phot[0]['flux_err']
     mag = -2.5 * np.log10(flux_njy / 3631e9)
     magerr = (2.5 / np.log(10)) * (flux_err / flux_njy)
     upper_limit = -2.5 * np.log10(flux_err * 5 / 3631e9)

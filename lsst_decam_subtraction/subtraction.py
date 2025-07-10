@@ -27,7 +27,8 @@ from .image_processing import (
     read_with_datasec, 
     make_psf, 
     refine_wcs, 
-    assemble_reference
+    assemble_reference,
+    refine_wcs_astropy
 )
 from .reference_download import (
     download_decam_reference,
@@ -73,7 +74,7 @@ def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_
     logging.info('Wrote difference image to {}'.format(output))
 
 
-def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, sci_header=None, save_intermediate=False, show=False, workdir='./', science_filename='test.fits', sigma_cut=5, max_iterations=3):
+def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg, sci_header=None, save_intermediate=False, show=False, workdir='./', science_filename='test.fits', sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True):
     """
     Perform image subtraction on LSST DECam data.
     
@@ -108,7 +109,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, sci_header=Non
 
     if save_intermediate and science_filename is None:
         raise Warning("Science filename is required to save intermediate files")
-    
+    """
     # Calculate background
     try:
         _data = refdata.data.astype(np.float32)
@@ -124,25 +125,34 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, sci_header=Non
     if save_intermediate and science_filename is not None:
         _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
         refdata_aligned.write(_template_filename, overwrite=True)
-
+    """
+    refdata_aligned = refdata
     # Perform image subtraction
     logger.info('loading the science image')
     science = ImageClass(scidata, sci_psf.data, saturation=65535)
+    #science.background_counts = np.zeros_like(science.background_counts)
+    #print(science.background_counts, science.background_std)
 
     refdata_aligned.mask[np.isnan(refdata_aligned.data)] = True
     logger.info('loading the template image')
     reference = ImageClass(refdata_aligned, ref_psf.data, refdata_aligned.mask, saturation=65535)
+    #reference.background_counts = np.zeros_like(reference.background_counts)
+    #print(reference.background_counts, reference.background_std)
     #reference.data = np.nan_to_num(reference.data, nan=ref_global_bkg)
     reference = np.nan_to_num(reference, nan=ref_global_bkg)
 
     logger.info('calculating the difference image')
-    difference = calculate_difference_image(science, reference, show=show, max_iterations=max_iterations, sigma_cut=sigma_cut)
+    difference = calculate_difference_image(science, reference, show=show, max_iterations=max_iterations, sigma_cut=sigma_cut, gain_ratio=gain_ratio, percent=percent, use_pixels=use_pixels, size_cut=size_cut)
     difference_zero_point = calculate_difference_image_zero_point(science, reference)
     normalized_difference = normalize_difference_image(difference, difference_zero_point, science, reference, 'i')
     if save_intermediate and science_filename is not None and sci_header is not None:
         output_filename = os.path.join(workdir, science_filename.replace('.fits', '.diff.fits'))
-        save_difference_image_lsst(normalized_difference, sci_header[0], sci_header[1], 'i', output_filename)
+        #save_difference_image_lsst(normalized_difference, sci_header[0], sci_header[1], 'i', output_filename)
+        hdu = fits.PrimaryHDU(normalized_difference, header=scidata.wcs.to_header())
+        hdu.writeto(output_filename, overwrite=True)
     normalized_difference = CCDData(normalized_difference, wcs=scidata.wcs, unit='adu')
+    normalized_difference = np.where(reference.mask, np.nan, normalized_difference)
+    
     logger.info(f"Image subtraction completed successfully!")
 
     return refdata_aligned, normalized_difference, sci_psf.data
@@ -157,9 +167,13 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     # Read the science image
     if cutout:
         cutout = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
+        #mask = safe_cutout2d(visit_image.mask.array, ra, dec, cutout_size=cutout_size)
         _scidata = lsst_cutout_to_ccddata(cutout)
     else:
         _scidata = lsst_visit_to_ccddata(visit_image)
+    if save_intermediate and science_filename is not None:
+            _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.orisci.fits'))
+            _scidata.write(_science_filename, overwrite=True)
     nx, ny = _scidata.shape
     half_ra, half_dec = astropy_pixel_to_world(nx//2, ny//2, _scidata.wcs)
 
@@ -179,9 +193,25 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     catalog = catalog[mask]
 
     # Refine WCS for science image
-    _, sci_stars = make_psf(_scidata, catalog, show=show, boxsize=25)
+    #_, sci_stars = make_psf(_scidata, catalog, show=show, boxsize=25, oversampling=4, center_accuracy=0.0001)
+    #stars_x, stars_y = lsst_world_to_pixel(catalog['ra'], catalog['dec'], visit_image)
+    #stars_x = np.array(stars_x)
+    #stars_y = np.array(stars_y)
+    #sci_stars = np.zeros(len(stars_x), dtype=[('x', 'f8'), ('y', 'f8'), ('i', 'i4')])
+    #sci_stars['x'] = stars_x-0.2
+    #sci_stars['y'] = stars_y+0.5
+    #sci_stars['i'] = np.arange(len(stars_x)) 
     scidata = _scidata.copy()
-    refine_wcs(scidata.wcs, sci_stars, catalog, use_sep=False)
+
+    #refine_wcs(scidata.wcs, sci_stars, catalog)
+    new_wcs = refine_wcs_astropy(scidata.data, scidata.wcs, catalog)
+    scidata.wcs = new_wcs
+
+    #_, sci_stars = make_psf(scidata, catalog, show=show, boxsize=25)
+
+    #_, sci_stars = make_psf(_scidata0, catalog, show=show, boxsize=25)
+    #scidata = _scidata0.copy()
+    #refine_wcs(scidata.wcs, sci_stars, catalog, use_sep=False)
     if save_intermediate and science_filename is not None:
         _science_filename = os.path.join(workdir, science_filename)
         scidata.write(_science_filename, overwrite=True)
@@ -195,6 +225,9 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading DES template")
         _refdata = download_decam_reference(ra=half_ra, dec=half_dec, fov=0.3, filt=image_filter)
+        if save_intermediate and science_filename is not None:
+            _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
+            _refdata.write(_science_filename, overwrite=True)
         logger.info(f'DES template downloaded for RA:{ra} DEC:{dec} for {image_filter} band')
     else:
         if template_filename is None:
@@ -203,17 +236,35 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         _refdata = read_with_datasec(filename)
     
     # Refine WCS for reference image
-    _, ref_stars = make_psf(_refdata, catalog, show=show)
-    refdata = _refdata.copy()
-    logger.info('Refining the WCS of the template image')
-    refine_wcs(refdata.wcs, ref_stars, catalog, use_sep=False)
+    #_, ref_stars = make_psf(_refdata, catalog, show=show)
+    #refdata = _refdata.copy()
+    #logger.info('Refining the WCS of the template image')
+    #refine_wcs(refdata.wcs, ref_stars, catalog, use_sep=False)
+    new_wcs = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog)
+    _refdata.wcs = new_wcs
+
+    # Calculate background
+    try:
+        _data = _refdata.data.astype(np.float32)
+    except:
+        _data = _refdata.data.byteswap().newbyteorder()
+    bkg = sep.Background(_data)
+    ref_global_bkg = bkg.globalback
+
+    # Assemble reference image
+    logger.info('align the template with the science image')
+    refdata_aligned = assemble_reference([_refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg)
+    
+    if save_intermediate and science_filename is not None:
+        _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
+        refdata_aligned.write(_template_filename, overwrite=True)
     
     # Get reference PSF
     logger.info(f'Making PSF for the template image')
-    ref_psf, _ = make_psf(refdata, catalog, show=show)
+    ref_psf, _ = make_psf(refdata_aligned, catalog, show=show)
 
     
-    return scidata, refdata, sci_psf, ref_psf
+    return scidata, refdata_aligned, sci_psf, ref_psf, ref_global_bkg
 
 
 

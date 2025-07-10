@@ -59,7 +59,7 @@ def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     ccddata = CCDData(data, wcs=WCS(header), unit='adu')
     return ccddata
 
-def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=23, nrows=500):
+def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=16, pm_limit=10, nrows=500):
     """
     Query Gaia DR3 catalog for stars within a specified radius.
     
@@ -89,7 +89,8 @@ def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=23, nrows=500):
         POINT('ICRS', ra, dec),
         CIRCLE('ICRS', {coord.ra.degree}, {coord.dec.degree}, {radius_arcmin/60.0})
     )
-    AND phot_g_mean_mag < {mag_limit}
+    AND phot_g_mean_mag > {mag_limit}
+    AND SQRT(POWER(pmra, 2) + POWER(pmdec, 2)) < {pm_limit}
     """
     job = Gaia.launch_job_async(query)
     return job.get_results()
