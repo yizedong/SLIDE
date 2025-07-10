@@ -158,7 +158,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     return refdata_aligned, normalized_difference, sci_psf.data
 
 def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False,
-                        cutout_size=1000, save_intermediate=False):
+                        cutout_size=1000, save_intermediate=False, save_original_temp=False):
     """
     Perform image subtraction on LSST DECam data.
     """
@@ -210,7 +210,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading DES template")
         _refdata = download_decam_reference(ra=half_ra, dec=half_dec, fov=0.3, filt=image_filter)
-        if save_intermediate and science_filename is not None:
+        if save_original_temp and science_filename is not None:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
         logger.info(f'DES template downloaded for RA:{ra} DEC:{dec} for {image_filter} band')
