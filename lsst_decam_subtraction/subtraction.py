@@ -129,7 +129,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     refdata_aligned = refdata
     # Perform image subtraction
     logger.info('loading the science image')
-    science = ImageClass(scidata, sci_psf.data, saturation=65535)
+    science = ImageClass(scidata, sci_psf.data, scidata.mask, saturation=65535)
     #science.background_counts = np.zeros_like(science.background_counts)
     #print(science.background_counts, science.background_std)
 
@@ -151,7 +151,8 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
         hdu = fits.PrimaryHDU(normalized_difference, header=scidata.wcs.to_header())
         hdu.writeto(output_filename, overwrite=True)
     normalized_difference = CCDData(normalized_difference, wcs=scidata.wcs, unit='adu')
-    normalized_difference = np.where(reference.mask, np.nan, normalized_difference)
+    combined_mask = reference.mask | scidata.mask
+    normalized_difference = np.where(combined_mask, np.nan, normalized_difference)
     
     logger.info(f"Image subtraction completed successfully!")
 
@@ -167,9 +168,9 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     image_filter = visit_image.filter.bandLabel
     # Read the science image
     if cutout:
-        cutout = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
+        _scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
         #mask = safe_cutout2d(visit_image.mask.array, ra, dec, cutout_size=cutout_size)
-        _scidata = lsst_cutout_to_ccddata(cutout)
+        #_scidata = lsst_cutout_to_ccddata(cutout)
     else:
         _scidata = lsst_visit_to_ccddata(visit_image)
     if save_intermediate and science_filename is not None:

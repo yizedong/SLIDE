@@ -115,7 +115,7 @@ def find_catalog_stars(image, wcs, catalog):
     data_sub = data - bkg
 
     # 2. Extract all sources
-    sources = sep.extract(data_sub, thresh=1.5, err=bkg.globalrms)
+    sources = sep.extract(data_sub, thresh=5, err=bkg.globalrms)
 
     known_x, known_y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], wcs)
 

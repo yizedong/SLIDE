@@ -60,18 +60,44 @@ def query_lsst_visits(butler, ra, dec, band, time1, time2):
                                          order_by=["visit.timespan.begin"])
     return dataset_refs
 
+def lsst_bad_mask(visit_image, mask_type = []):
+    mask = visit_image.mask.array
+    if len(mask_type) == 0:
+        bitmask = visit_image.mask.getPlaneBitMask([
+                "BAD",          # detector bad pixel
+                "SAT",          # saturated pixel
+                "INTRP",        # interpolated pixel
+                "CR",           # cosmic ray
+                "EDGE",         # edge of the detector
+                #"DETECTED",     # source detected
+                #"DETECTED_NEGATIVE",  # negative source detected
+                "SUSPECT",      # suspicious pixel
+                "NO_DATA",      # no data available
+                "SENSOR_EDGE",  # sensor edge
+                "CLIPPED",      # pixel in clipped area
+                "CROSSTALK",    # crosstalk
+                #"NOT_DEBLENDED",# not deblended
+                "UNMASKEDNAN",  # unmasked NaN
+                #"VIGNETTED",    # vignetting
+                "STREAK",       # streak from satellite or airplane
+            ])
+    else:
+        bitmask = visit_image.mask.getPlaneBitMask(mask_type)
+    image_mask = (visit_image.mask.array & bitmask) != 0
+    return image_mask
+
 def lsst_visit_to_ccddata(visit_image, saveas=None):
     data = visit_image.image.array
     header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     wcs = WCS(header)
+    mask = lsst_bad_mask(visit_image)
     ccddata = CCDData(data, wcs=wcs, unit='adu')
+    ccddata.mask = mask
     if saveas is not None:
         visit_image.writeFits(saveas)
     return ccddata
 
-def lsst_cutout_to_ccddata(cutout, saveas=None):
-    ccddata = CCDData(cutout.data, wcs=cutout.wcs, unit='adu')
-    return ccddata
+
 
 def lsst_visit_to_psf(visit_image, ra, dec, saveas=None):
     x, y = lsst_world_to_pixel(ra, dec, visit_image)
@@ -142,7 +168,7 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
         cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
 
     data = visit_image.image.array
-    #mask = 
+    mask = lsst_bad_mask(visit_image)
     header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     wcs = WCS(header)
         
@@ -159,10 +185,14 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
 
     pixel_center = (xcen, ycen)
     cutout = Cutout2D(data, position=pixel_center, size=cutout_size, wcs=wcs, mode='trim')
+    cutout_mask = Cutout2D(mask, position=pixel_center, size=cutout_size, wcs=wcs, mode='trim')
+    ccddata = CCDData(cutout.data, wcs=cutout.wcs, unit='adu')
+    ccddata.mask = cutout_mask.data
+    return ccddata
 
-    return cutout
-
-
+def lsst_cutout_to_ccddata(cutout, saveas=None):
+    ccddata = CCDData(cutout.data, wcs=cutout.wcs, unit='adu')
+    return ccddata
 
 def forced_phot(ra, dec, image, wcs, psf_data):
     xx, yy = np.mgrid[:psf_data.shape[0], :psf_data.shape[1]]
