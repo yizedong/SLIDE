@@ -145,7 +145,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     difference = calculate_difference_image(science, reference, show=show, max_iterations=max_iterations, sigma_cut=sigma_cut, gain_ratio=gain_ratio, percent=percent, use_pixels=use_pixels, size_cut=size_cut)
     difference_zero_point = calculate_difference_image_zero_point(science, reference)
     normalized_difference = normalize_difference_image(difference, difference_zero_point, science, reference, 'i')
-    if save_intermediate and science_filename is not None and sci_header is not None:
+    if save_intermediate and science_filename is not None:
         output_filename = os.path.join(workdir, science_filename.replace('.fits', '.diff.fits'))
         #save_difference_image_lsst(normalized_difference, sci_header[0], sci_header[1], 'i', output_filename)
         hdu = fits.PrimaryHDU(normalized_difference, header=scidata.wcs.to_header())
