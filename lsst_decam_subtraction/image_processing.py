@@ -228,7 +228,8 @@ def refine_wcs_astropy(image, wcs, catalog, projection='TAN'):
     matched_sources = find_catalog_stars(image, wcs, catalog)
 
     # matched pixel positions and sky positions
-    new_wcs = fit_wcs_from_points(xy=(matched_sources['x'], matched_sources['y']), world_coords=sky_coords, projection=projection)
+    new_wcs = fit_wcs_from_points(xy=(matched_sources['x'], matched_sources['y']), world_coords=sky_coords, projection=projection,
+                                 sip_degree=5)
     return new_wcs
     
 

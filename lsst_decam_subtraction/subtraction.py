@@ -193,25 +193,10 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     catalog = catalog[mask]
 
     # Refine WCS for science image
-    #_, sci_stars = make_psf(_scidata, catalog, show=show, boxsize=25, oversampling=4, center_accuracy=0.0001)
-    #stars_x, stars_y = lsst_world_to_pixel(catalog['ra'], catalog['dec'], visit_image)
-    #stars_x = np.array(stars_x)
-    #stars_y = np.array(stars_y)
-    #sci_stars = np.zeros(len(stars_x), dtype=[('x', 'f8'), ('y', 'f8'), ('i', 'i4')])
-    #sci_stars['x'] = stars_x-0.2
-    #sci_stars['y'] = stars_y+0.5
-    #sci_stars['i'] = np.arange(len(stars_x)) 
     scidata = _scidata.copy()
-
-    #refine_wcs(scidata.wcs, sci_stars, catalog)
     new_wcs = refine_wcs_astropy(scidata.data, scidata.wcs, catalog)
     scidata.wcs = new_wcs
 
-    #_, sci_stars = make_psf(scidata, catalog, show=show, boxsize=25)
-
-    #_, sci_stars = make_psf(_scidata0, catalog, show=show, boxsize=25)
-    #scidata = _scidata0.copy()
-    #refine_wcs(scidata.wcs, sci_stars, catalog, use_sep=False)
     if save_intermediate and science_filename is not None:
         _science_filename = os.path.join(workdir, science_filename)
         scidata.write(_science_filename, overwrite=True)
@@ -236,10 +221,6 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         _refdata = read_with_datasec(filename)
     
     # Refine WCS for reference image
-    #_, ref_stars = make_psf(_refdata, catalog, show=show)
-    #refdata = _refdata.copy()
-    #logger.info('Refining the WCS of the template image')
-    #refine_wcs(refdata.wcs, ref_stars, catalog, use_sep=False)
     new_wcs = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog)
     _refdata.wcs = new_wcs
 
