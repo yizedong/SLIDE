@@ -158,7 +158,8 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     return refdata_aligned, normalized_difference, sci_psf.data
 
 def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False,
-                        cutout_size=1000, save_intermediate=False, save_original_temp=False):
+                        cutout_size=1000, save_intermediate=False, save_original_temp=False,  
+                         fit_distortion=None):
     """
     Perform image subtraction on LSST DECam data.
     """
@@ -194,7 +195,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
 
     # Refine WCS for science image
     scidata = _scidata.copy()
-    new_wcs = refine_wcs_astropy(scidata.data, scidata.wcs, catalog)
+    new_wcs = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fit_distortion=fit_distortion)
     scidata.wcs = new_wcs
 
     if save_intermediate and science_filename is not None:
@@ -221,7 +222,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         _refdata = read_with_datasec(filename)
     
     # Refine WCS for reference image
-    new_wcs = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog)
+    new_wcs = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog, fit_distortion=fit_distortion)
     _refdata.wcs = new_wcs
 
     # Calculate background

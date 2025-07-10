@@ -223,13 +223,12 @@ def refine_wcs(wcs, stars, catalog, use_sep=False):
     print(res)
     update_wcs(wcs, res.x)
 
-def refine_wcs_astropy(image, wcs, catalog, projection='TAN'):
+def refine_wcs_astropy(image, wcs, catalog, projection='TAN', fit_distortion=None):
     sky_coords = SkyCoord(ra=catalog['ra'], dec=catalog['dec'])
     matched_sources = find_catalog_stars(image, wcs, catalog)
 
     # matched pixel positions and sky positions
-    new_wcs = fit_wcs_from_points(xy=(matched_sources['x'], matched_sources['y']), world_coords=sky_coords, projection=projection,
-                                 sip_degree=5)
+    new_wcs = fit_wcs_from_points(xy=(matched_sources['x'], matched_sources['y']), world_coords=sky_coords, projection=projection, sip_degree=fit_distortion)
     return new_wcs
     
 
