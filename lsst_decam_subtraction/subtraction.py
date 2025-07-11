@@ -195,6 +195,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     catalog = catalog[mask]
 
     # Refine WCS for science image
+    logger.info(f"Using {len(catalog)} stars for WCS refinement")
     scidata = _scidata.copy()
     new_wcs = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fit_distortion=fit_distortion)
     scidata.wcs = new_wcs
@@ -202,7 +203,6 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     if save_intermediate and science_filename is not None:
         _science_filename = os.path.join(workdir, science_filename)
         scidata.write(_science_filename, overwrite=True)
-    logger.info(f"Using {len(catalog)} stars for WCS refinement")
 
     # Read science image PSF
     sci_psf = lsst_visit_to_psf(visit_image, ra, dec)

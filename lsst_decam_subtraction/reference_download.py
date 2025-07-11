@@ -45,7 +45,7 @@ def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     response = requests.get(url)
     if response.status_code == 200:
         hdul = fits.open(BytesIO(response.content))
-        hdul.info()  # See FITS file structure
+        #hdul.info()  # See FITS file structure
         data = hdul[0].data
         header = hdul[0].header
         hdul.close()
