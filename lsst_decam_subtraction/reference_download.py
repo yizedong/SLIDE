@@ -59,7 +59,7 @@ def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     ccddata = CCDData(data, wcs=WCS(header), unit='adu')
     return ccddata
 
-def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=16, pm_limit=10, nrows=500):
+def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=16, pm_limit=20, nrows=500):
     """
     Query Gaia DR3 catalog for stars within a specified radius.
     

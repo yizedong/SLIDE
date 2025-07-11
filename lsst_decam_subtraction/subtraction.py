@@ -158,8 +158,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
 
     return refdata_aligned, normalized_difference, sci_psf.data
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False,
-                        cutout_size=1000, save_intermediate=False, save_original_temp=False,  
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, make_sci_psf=False, save_intermediate=False, save_original_temp=False,  
                          fit_distortion=None):
     """
     Perform image subtraction on LSST DECam data.
@@ -205,7 +204,15 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         scidata.write(_science_filename, overwrite=True)
 
     # Read science image PSF
-    sci_psf = lsst_visit_to_psf(visit_image, ra, dec)
+    if make_sci_psf:
+        sci_psf, _ = make_psf(scidata, catalog, show=show)
+    else:
+        sci_psf = lsst_visit_to_psf(visit_image, ra, dec)
+        if show:
+            fig, ax1 = plt.subplots(1, 1, figsize=(7, 7))
+            norm = ImageNormalize(sci_psf, PercentileInterval(98))
+            ax1.imshow(sci_psf, norm=norm, origin='lower')
+            ax1.set_title('Science PSF')
 
     # Get reference image
     if download_DES_temp:
@@ -266,7 +273,7 @@ def local_data_load(ra=None, dec=None, science_filename=None, template_filename=
     print(f"Science image center: RA={np.round(half_ra, 3)}, DEC={np.round(half_dec, 3)}")
     
     # Get Gaia catalog for PSF modeling
-    catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), radius_arcmin=10)
+    catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), radius_arcmin=12)
     print(f'Gaia catalog size: {len(catalog)}')
     catalog['raMean'], catalog['decMean'] = catalog['ra'], catalog['dec']
     
