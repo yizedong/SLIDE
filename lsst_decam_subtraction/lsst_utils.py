@@ -99,14 +99,54 @@ def lsst_visit_to_ccddata(visit_image, saveas=None):
 
 
 
-def lsst_visit_to_psf(visit_image, ra, dec, saveas=None):
+def lsst_visit_to_psf(visit_image, ra, dec):
     x, y = lsst_world_to_pixel(ra, dec, visit_image)
     psf = visit_image.getPsf()
     xy = lsst.geom.Point2D(x, y)
     psf_image = psf.computeImage(xy)
-    if saveas is not None:
-        psf_image.writeFits(saveas)
     ccddata = CCDData(psf_image.array, unit='adu')
+    return ccddata
+
+
+def lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=(2000, 2000), sample_number=20):
+    if isinstance(cutout_size, (int, float)):
+        cutout_size = (int(cutout_size), int(cutout_size))
+    else:
+        cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
+
+    data = visit_image.image.array
+    ny, nx = data.shape
+
+    # Get WCS and center in pixel coordinates
+    header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
+    wcs = WCS(header)
+    xcen, ycen = astropy_world_to_pixel(ra, dec, wcs)
+
+    # Shift center inward if too close to edge
+    half_x, half_y = cutout_size[0] // 2, cutout_size[1] // 2
+    xcen = np.clip(xcen, half_x, nx - half_x)
+    ycen = np.clip(ycen, half_y, ny - half_y)
+
+    # Sample PSFs
+    psf = visit_image.getPsf()
+    psf_stars = []
+
+    for dx in np.linspace(-cutout_size[0] / 2, cutout_size[0] / 2, sample_number):
+        for dy in np.linspace(-cutout_size[1] / 2, cutout_size[1] / 2, sample_number):
+            x_sample, y_sample = xcen + dx, ycen + dy
+            xy = lsst.geom.Point2D(x_sample, y_sample)
+            psf_image = psf.computeImage(xy).getArray()
+            psf_stars.append(psf_image)
+
+    if len(psf_stars) == 0:
+        raise RuntimeError("No valid PSFs found in the region.")
+
+    # Stack and normalize
+    stacked = np.median(np.stack(psf_stars, axis=0), axis=0)
+    psf_final = stacked / np.sum(stacked)
+
+    ccddata = CCDData(psf_final, unit='adu')
+
     return ccddata
         
 

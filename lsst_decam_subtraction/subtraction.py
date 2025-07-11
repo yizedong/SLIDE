@@ -34,7 +34,7 @@ from .reference_download import (
     download_decam_reference,
     gaia3cat
 )
-from .lsst_utils import query_lsst_visits, lsst_pixel_to_world, lsst_world_to_pixel, astropy_world_to_pixel, astropy_pixel_to_world, lsst_visit_to_ccddata, lsst_visit_to_psf, lsst_cutout_to_ccddata, safe_cutout2d
+from .lsst_utils import query_lsst_visits, lsst_pixel_to_world, lsst_world_to_pixel, astropy_world_to_pixel, astropy_pixel_to_world, lsst_visit_to_ccddata, lsst_visit_to_psf, lsst_cutout_to_ccddata, safe_cutout2d, lsst_visit_to_psf_median
 from astropy.nddata import CCDData
 from astropy import log
 logger = logging.getLogger("lsst_decam_subtraction")  # or __name__
@@ -158,8 +158,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
 
     return refdata_aligned, normalized_difference, sci_psf.data
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, make_sci_psf=False, save_intermediate=False, save_original_temp=False,  
-                         fit_distortion=None):
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, save_intermediate=False, save_original_temp=False, fit_distortion=None):
     """
     Perform image subtraction on LSST DECam data.
     """
@@ -204,15 +203,24 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         scidata.write(_science_filename, overwrite=True)
 
     # Read science image PSF
+    psf_flag = 0
     if make_sci_psf:
         sci_psf, _ = make_psf(scidata, catalog, show=show)
+        if len(catalog) < 5:
+            logger.info('Too few stars, getting PSF from the visit_image')
+            sci_psf = lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=cutout_size)
+            psf_flag=1
+    elif get_median_sci_psf:
+        sci_psf = lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=cutout_size)
+        psf_flag = 1
     else:
         sci_psf = lsst_visit_to_psf(visit_image, ra, dec)
-        if show:
-            fig, ax1 = plt.subplots(1, 1, figsize=(7, 7))
-            norm = ImageNormalize(sci_psf, PercentileInterval(98))
-            ax1.imshow(sci_psf, norm=norm, origin='lower')
-            ax1.set_title('Science PSF')
+        psf_flag = 1
+    if show and psf_flag==1:
+        fig, ax1 = plt.subplots(1, 1, figsize=(5, 5))
+        norm = ImageNormalize(sci_psf, PercentileInterval(98))
+        ax1.imshow(sci_psf, norm=norm, origin='lower')
+        ax1.set_title('Science PSF')
 
     # Get reference image
     if download_DES_temp:
