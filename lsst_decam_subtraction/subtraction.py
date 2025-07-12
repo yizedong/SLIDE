@@ -75,7 +75,7 @@ def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_
     logging.info('Wrote difference image to {}'.format(output))
 
 
-def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg, sci_header=None, save_intermediate=False, show=False, workdir='./', science_filename='test.fits', sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True):
+def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg, sci_header=None, save_intermediate=False, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True):
     """
     Perform image subtraction on LSST DECam data.
     
@@ -108,8 +108,8 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
         Path to output difference image
     """
 
-    if save_intermediate and science_filename is None:
-        raise Warning("Science filename is required to save intermediate files")
+    if save_diff and science_filename is None:
+        science_filename = scidata.meta['filename']
     """
     # Calculate background
     try:
@@ -156,7 +156,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     difference = calculate_difference_image(science, reference, show=show, max_iterations=max_iterations, sigma_cut=sigma_cut, gain_ratio=gain_ratio, percent=percent, use_pixels=use_pixels, size_cut=size_cut)
     difference_zero_point = calculate_difference_image_zero_point(science, reference)
     normalized_difference = normalize_difference_image(difference, difference_zero_point, science, reference, 'i')
-    if save_intermediate and science_filename is not None:
+    if save_diff:
         output_filename = os.path.join(workdir, science_filename.replace('.fits', '.diff.fits'))
         #save_difference_image_lsst(normalized_difference, sci_header[0], sci_header[1], 'i', output_filename)
         hdu = fits.PrimaryHDU(normalized_difference, header=scidata.wcs.to_header())
@@ -170,12 +170,17 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
 
     return refdata_aligned, normalized_difference, sci_psf.data
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None):
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None):
     """
     Perform image subtraction on LSST DECam data.
     """
     
     image_filter = visit_image.filter.bandLabel
+    if (save_intermediate or save_original_temp) and science_filename is None:
+        visit_info = visit_image.getInfo().getVisitInfo()
+        visit_id = visit_info.getId()
+        detector_id = visit_image.getDetector().getId()
+        science_filename = f'{visit_id}_{detector_id}_{image_filter}.fits'
     # Read the science image
     if cutout:
         _scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
@@ -183,7 +188,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     else:
         _scidata = lsst_visit_to_ccddata(visit_image)
     logger.info(f'science image saturation level: {_scidata.meta['SATURATE']}')
-    if save_intermediate and science_filename is not None:
+    if save_intermediate:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.orisci.fits'))
             _scidata.write(_science_filename, overwrite=True)
     nx, ny = _scidata.shape
@@ -207,7 +212,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     new_wcs, catalog = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fwhm=get_visit_fwhm(visit_image, ra, dec), fit_distortion=fit_distortion)
     scidata.wcs = new_wcs
 
-    if save_intermediate and science_filename is not None:
+    if save_intermediate:
         _science_filename = os.path.join(workdir, science_filename)
         scidata.write(_science_filename, overwrite=True)
     
@@ -236,7 +241,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading DES template")
         _refdata = download_decam_reference(ra=half_ra, dec=half_dec, fov=0.3, filt=image_filter)
-        if save_original_temp and science_filename is not None:
+        if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
         logger.info(f'DES template downloaded for RA:{ra} DEC:{dec} for {image_filter} band')
@@ -264,7 +269,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     logger.info('align the template with the science image')
     refdata_aligned = assemble_reference([_refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg)
     refdata_aligned.meta['SATURATE'] = _refdata.meta['SATURATE']
-    if save_intermediate and science_filename is not None:
+    if save_intermediate:
         _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
         refdata_aligned.write(_template_filename, overwrite=True)
     refdata_aligned.mask = np.logical_or(scidata.mask, refdata_aligned.mask)
@@ -273,7 +278,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     ref_psf, _ = make_psf(refdata_aligned, catalog, show=show)
 
     #scidata.data[scidata.mask] = 0
-    
+    scidata.meta['filename'] = science_filename
     return scidata, refdata_aligned, sci_psf, ref_psf, ref_global_bkg
 
 
