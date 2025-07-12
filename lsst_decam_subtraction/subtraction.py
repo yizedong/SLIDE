@@ -32,9 +32,10 @@ from .image_processing import (
 )
 from .reference_download import (
     download_decam_reference,
-    gaia3cat
+    gaia3cat,
+    des2cat
 )
-from .lsst_utils import query_lsst_visits, lsst_pixel_to_world, lsst_world_to_pixel, astropy_world_to_pixel, astropy_pixel_to_world, lsst_visit_to_ccddata, lsst_visit_to_psf, lsst_cutout_to_ccddata, safe_cutout2d, lsst_visit_to_psf_median
+from .lsst_utils import query_lsst_visits, lsst_pixel_to_world, lsst_world_to_pixel, astropy_world_to_pixel, astropy_pixel_to_world, lsst_visit_to_ccddata, lsst_visit_to_psf, lsst_cutout_to_ccddata, safe_cutout2d, lsst_visit_to_psf_median, get_visit_fwhm
 from astropy.nddata import CCDData
 from astropy import log
 logger = logging.getLogger("lsst_decam_subtraction")  # or __name__
@@ -127,15 +128,25 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
         refdata_aligned.write(_template_filename, overwrite=True)
     """
     refdata_aligned = refdata
+    
+    # Calculate background
+    try:
+        _data = scidata.data.astype(np.float32)
+    except:
+        _data = scidata.data.byteswap().newbyteorder()
+    bkg = sep.Background(_data)
+    sci_global_bkg = bkg.globalback
+    
     # Perform image subtraction
     logger.info('loading the science image')
-    science = ImageClass(scidata, sci_psf.data, scidata.mask, saturation=65535)
+    science = ImageClass(scidata, sci_psf.data, scidata.mask, saturation=scidata.meta['SATURATE'])
+    science = np.nan_to_num(science, nan=sci_global_bkg) #visit images are already bkg subtracted
     #science.background_counts = np.zeros_like(science.background_counts)
     #print(science.background_counts, science.background_std)
 
     refdata_aligned.mask[np.isnan(refdata_aligned.data)] = True
     logger.info('loading the template image')
-    reference = ImageClass(refdata_aligned, ref_psf.data, refdata_aligned.mask, saturation=65535)
+    reference = ImageClass(refdata_aligned, ref_psf.data, refdata_aligned.mask, saturation=refdata_aligned.meta['SATURATE'])
     #reference.background_counts = np.zeros_like(reference.background_counts)
     #print(reference.background_counts, reference.background_std)
     #reference.data = np.nan_to_num(reference.data, nan=ref_global_bkg)
@@ -152,13 +163,14 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
         hdu.writeto(output_filename, overwrite=True)
     normalized_difference = CCDData(normalized_difference, wcs=scidata.wcs, unit='adu')
     combined_mask = reference.mask | scidata.mask
-    normalized_difference = np.where(combined_mask, np.nan, normalized_difference)
+    #normalized_difference = np.where(combined_mask, np.nan, normalized_difference)
+    normalized_difference.mask = combined_mask
     
     logger.info(f"Image subtraction completed successfully!")
 
     return refdata_aligned, normalized_difference, sci_psf.data
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, save_intermediate=False, save_original_temp=False, fit_distortion=None):
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'test.fits', template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None):
     """
     Perform image subtraction on LSST DECam data.
     """
@@ -167,41 +179,38 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     # Read the science image
     if cutout:
         _scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
-        #mask = safe_cutout2d(visit_image.mask.array, ra, dec, cutout_size=cutout_size)
         #_scidata = lsst_cutout_to_ccddata(cutout)
     else:
         _scidata = lsst_visit_to_ccddata(visit_image)
+    logger.info(f'science image saturation level: {_scidata.meta['SATURATE']}')
     if save_intermediate and science_filename is not None:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.orisci.fits'))
             _scidata.write(_science_filename, overwrite=True)
     nx, ny = _scidata.shape
     half_ra, half_dec = astropy_pixel_to_world(nx//2, ny//2, _scidata.wcs)
 
-    # Get Gaia catalog for PSF modeling
-    catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), radius_arcmin=11)
+    # Get Gaia/DES catalog for PSF modeling
+    if reference_catalog == 'gaia':
+        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=_scidata, band=image_filter, radius_arcmin=11, mag_limit=reference_mag1)
+        #we also need to query the DES catalog to the PSF FWHM of the DES template
+        _des_catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=_scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
+        des_fwhm = np.median(_des_catalog[f'{image_filter}FWHM'])
+    elif reference_catalog == 'des': 
+        catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=_scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
+        des_fwhm = np.median(catalog[f'{image_filter}FWHM'])
+    logger.info(f'catalog size: {len(catalog)}')
     catalog['raMean'], catalog['decMean'] = catalog['ra'], catalog['dec']
-    logger.info(f'Gaia catalog size: {len(catalog)}')
-    
-    # Filter stars within image bounds
-    x, y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], _scidata.wcs)
-    margin = 25 // 2
-    
-    mask = (
-        (x > margin) & (x < nx - margin) &
-        (y > margin) & (y < ny - margin)
-    )
-    catalog = catalog[mask]
 
     # Refine WCS for science image
     logger.info(f"Using {len(catalog)} stars for WCS refinement")
     scidata = _scidata.copy()
-    new_wcs = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fit_distortion=fit_distortion)
+    new_wcs, catalog = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fwhm=get_visit_fwhm(visit_image, ra, dec), fit_distortion=fit_distortion)
     scidata.wcs = new_wcs
 
     if save_intermediate and science_filename is not None:
         _science_filename = os.path.join(workdir, science_filename)
         scidata.write(_science_filename, overwrite=True)
-
+    
     # Read science image PSF
     psf_flag = 0
     if make_sci_psf:
@@ -236,9 +245,10 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
             raise ValueError("Template filename must be provided when not downloading")
         filename = os.path.join(workdir, template_filename)
         _refdata = read_with_datasec(filename)
+        _refdata.meta['SATURATE'] = 65535
     
     # Refine WCS for reference image
-    new_wcs = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog, fit_distortion=fit_distortion)
+    new_wcs, catalog = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog, fwhm=des_fwhm, fit_distortion=fit_distortion)
     _refdata.wcs = new_wcs
 
     # Calculate background
@@ -249,18 +259,20 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = 'tes
     bkg = sep.Background(_data)
     ref_global_bkg = bkg.globalback
 
+
     # Assemble reference image
     logger.info('align the template with the science image')
     refdata_aligned = assemble_reference([_refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg)
-    
+    refdata_aligned.meta['SATURATE'] = _refdata.meta['SATURATE']
     if save_intermediate and science_filename is not None:
         _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
         refdata_aligned.write(_template_filename, overwrite=True)
-    
+    refdata_aligned.mask = np.logical_or(scidata.mask, refdata_aligned.mask)
     # Get reference PSF
     logger.info(f'Making PSF for the template image')
     ref_psf, _ = make_psf(refdata_aligned, catalog, show=show)
 
+    #scidata.data[scidata.mask] = 0
     
     return scidata, refdata_aligned, sci_psf, ref_psf, ref_global_bkg
 

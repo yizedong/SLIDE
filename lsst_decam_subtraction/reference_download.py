@@ -14,6 +14,9 @@ from pyvo.dal import sia
 from numpy.core.defchararray import startswith
 from astropy.coordinates import SkyCoord
 from astroquery.gaia import Gaia
+from astroquery.vizier import Vizier
+from astropy import units as u
+from .lsst_utils import astropy_world_to_pixel
 
 
 def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
@@ -57,9 +60,10 @@ def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         print(f"Failed to fetch FITS file: {response.status_code}")
     
     ccddata = CCDData(data, wcs=WCS(header), unit='adu')
+    ccddata.meta['SATURATE'] = header['SATURATE']
     return ccddata
 
-def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=16, pm_limit=20, nrows=500):
+def gaia3cat(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_limit=50, nrows=500):
     """
     Query Gaia DR3 catalog for stars within a specified radius.
     
@@ -72,7 +76,7 @@ def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=16, pm_limit=20, nrows=500):
     radius_arcmin : float, optional
         Search radius in arcminutes (default: 10)
     mag_limit : float, optional
-        Magnitude limit (default: 23)
+        Magnitude limit (default: 16.5)
     nrows : int, optional
         Maximum number of rows to return (default: 500)
         
@@ -81,6 +85,12 @@ def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=16, pm_limit=20, nrows=500):
     astropy.table.Table
         Gaia catalog results
     """
+    if band in ['u', 'g']:
+        gaia_filt = 'bp'
+    elif band in ['r', 'i', 'z']:
+        gaia_filt = 'rp'
+    else:
+        gaia_filt = 'g' 
     coord = SkyCoord(ra=ra, dec=dec, unit='deg')
     query = f"""
     SELECT TOP {nrows} *
@@ -89,8 +99,51 @@ def gaia3cat(ra, dec, radius_arcmin=10, mag_limit=16, pm_limit=20, nrows=500):
         POINT('ICRS', ra, dec),
         CIRCLE('ICRS', {coord.ra.degree}, {coord.dec.degree}, {radius_arcmin/60.0})
     )
-    AND phot_g_mean_mag > {mag_limit}
+    AND phot_{gaia_filt}_mean_mag > {mag_limit}
     AND SQRT(POWER(pmra, 2) + POWER(pmdec, 2)) < {pm_limit}
     """
     job = Gaia.launch_job_async(query)
-    return job.get_results()
+    catalog = job.get_results()
+    
+    # Filter stars within image bounds
+    nx, ny = ccddata.shape
+    x, y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], ccddata.wcs)
+    margin = 25 // 2
+    
+    mask = (
+        (x > margin) & (x < nx - margin) &
+        (y > margin) & (y < ny - margin)
+    )
+    catalog = catalog[mask]
+    return catalog
+
+def des2cat(ra, dec, ccddata, band='r', radius_arcmin=11, mag1=16, mag2=21):
+    radius = radius_arcmin
+    coord = SkyCoord(ra=ra, dec=dec, unit=(u.degree, u.degree))
+    Vizier.ROW_LIMIT=-1
+    Vizier.columns = ['RA_ICRS', 'DE_ICRS', 'Tile',
+                      'CoadID', 
+                      f'S/G{band}',
+                      f'{band}mag0',
+                       f'{band}FWHM']
+    Vizier.column_filters={'S/Gr': '>0.5',
+                            f'{band}mag0': f'>{mag1:.2f} && <={mag2:.2f}'}
+    t = Vizier.query_region(coord,
+                                 radius=float('{:f}'.format(radius))*u.arcmin,
+                                 catalog='II/371')
+    des_table = t[0]
+    des_table['ra'] = des_table['RA_ICRS']
+    des_table['dec'] = des_table['DE_ICRS']
+
+    catalog = des_table
+    # Filter stars within image bounds
+    nx, ny = ccddata.shape
+    x, y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], ccddata.wcs)
+    margin = 25 // 2
+    
+    mask = (
+        (x > margin) & (x < nx - margin) &
+        (y > margin) & (y < ny - margin)
+    )
+    catalog = catalog[mask]
+    return catalog

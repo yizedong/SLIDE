@@ -115,8 +115,8 @@ def find_catalog_stars(image, wcs, catalog):
     data_sub = data - bkg
 
     # 2. Extract all sources
-    sources = sep.extract(data_sub, thresh=5, err=bkg.globalrms)
-
+    sources = sep.extract(data_sub, thresh=3, err=bkg.globalrms)
+    
     known_x, known_y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], wcs)
 
     matched_sources = []
@@ -223,13 +223,63 @@ def refine_wcs(wcs, stars, catalog, use_sep=False):
     print(res)
     update_wcs(wcs, res.x)
 
-def refine_wcs_astropy(image, wcs, catalog, projection='TAN', fit_distortion=None):
-    sky_coords = SkyCoord(ra=catalog['ra'], dec=catalog['dec'])
-    matched_sources = find_catalog_stars(image, wcs, catalog)
+def refine_multiple_stars(image, wcs, catalog, box_size=25, fwhm=5.0, threshold=5):
+    from astropy.stats import sigma_clipped_stats
+    from astropy.nddata import Cutout2D
+    from photutils.detection import DAOStarFinder
 
+    known_x, known_y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], wcs)
+    refined_xy = {}
+    refined_xy['x'] = []
+    refined_xy['y'] = []
+    
+
+    for (rough_x, rough_y) in zip(known_x, known_y):
+        try:
+            cutout = Cutout2D(image, (rough_x, rough_y), size=box_size)
+            mean, median, std = sigma_clipped_stats(cutout.data)
+            finder = DAOStarFinder(fwhm=fwhm, threshold=threshold*std)
+            sources = finder(cutout.data - median)
+
+            if sources is None or len(sources) == 0:
+                #refined_xy_list.append((np.nan, np.nan))
+                refined_xy['x'].append(np.nan)
+                refined_xy['y'].append(np.nan)
+                continue
+
+            # Choose nearest star to center
+            dx = sources['xcentroid'] - box_size/2
+            dy = sources['ycentroid'] - box_size/2
+            distances = np.hypot(dx, dy)
+            idx = np.argmin(distances)
+
+            x_refined = sources['xcentroid'][idx] + cutout.origin_original[0]
+            y_refined = sources['ycentroid'][idx] + cutout.origin_original[1]
+            #refined_xy_list.append((x_refined, y_refined))
+            refined_xy['x'].append(x_refined)
+            refined_xy['y'].append(y_refined)
+        except Exception as e:
+            print(f"Warning: failed to refine star at ({rough_x:.1f}, {rough_y:.1f}): {e}")
+            #refined_xy_list.append((np.nan, np.nan))
+            refined_xy['x'].append(np.nan)
+            refined_xy['y'].append(np.nan)
+
+    return refined_xy
+    
+def refine_wcs_astropy(image, wcs, catalog, fwhm=5.0, projection='TAN', fit_distortion=None):
+    #matched_sources = find_catalog_stars(image, wcs, catalog)
+    matched_sources = refine_multiple_stars(image, wcs, catalog, box_size=25, fwhm=fwhm)
+    
+    valid_mask = np.isfinite(matched_sources['x']) & np.isfinite(matched_sources['y'])
+    matched_x = np.array(matched_sources['x'])[valid_mask]
+    matched_y = np.array(matched_sources['y'])[valid_mask]
+    
+    catalog = catalog[valid_mask]
+    
+    sky_coords = SkyCoord(ra=catalog['ra'], dec=catalog['dec'], unit='deg')
     # matched pixel positions and sky positions
-    new_wcs = fit_wcs_from_points(xy=(matched_sources['x'], matched_sources['y']), world_coords=sky_coords, projection=projection, sip_degree=fit_distortion)
-    return new_wcs
+    new_wcs = fit_wcs_from_points(xy=(matched_x, matched_y), world_coords=sky_coords, projection=projection, sip_degree=fit_distortion)
+    return new_wcs, catalog
     
 
 def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, order='bicubic'):

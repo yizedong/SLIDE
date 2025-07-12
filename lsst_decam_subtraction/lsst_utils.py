@@ -91,13 +91,31 @@ def lsst_visit_to_ccddata(visit_image, saveas=None):
     header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     wcs = WCS(header)
     mask = lsst_bad_mask(visit_image)
+    
+    sat_mask = lsst_bad_mask(visit_image, mask_type = ['SAT'])
+    masked_values = data[sat_mask] 
+    finite_values = masked_values[np.isfinite(masked_values)]
+    SATURATE = np.nanmax(finite_values) if finite_values.size > 0 else 60000
+    
     ccddata = CCDData(data, wcs=wcs, unit='adu')
     ccddata.mask = mask
+    ccddata.meta['SATURATE'] = SATURATE
     if saveas is not None:
         visit_image.writeFits(saveas)
     return ccddata
 
-
+def get_visit_fwhm(visit_image, ra, dec):
+    SIGMA_TO_FWHM = 2.0*np.sqrt(2.0*np.log(2.0))
+    x, y = lsst_world_to_pixel(ra, dec, visit_image)
+    
+    info_calexp = visit_image.getInfo()
+    psf_calexp = info_calexp.getPsf()
+    
+    point_image = lsst.geom.Point2D(x, y)
+    psf_shape = psf_calexp.computeShape(point_image)
+    psf_sigma = psf_shape.getDeterminantRadius()
+    psf_fwhm = psf_sigma * SIGMA_TO_FWHM
+    return psf_fwhm
 
 def lsst_visit_to_psf(visit_image, ra, dec):
     x, y = lsst_world_to_pixel(ra, dec, visit_image)
@@ -209,6 +227,11 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
 
     data = visit_image.image.array
     mask = lsst_bad_mask(visit_image)
+    sat_mask = lsst_bad_mask(visit_image, mask_type = ['SAT'])
+    masked_values = data[sat_mask] 
+    finite_values = masked_values[np.isfinite(masked_values)]
+    SATURATE = np.nanmax(finite_values) if finite_values.size > 0 else 60000
+    #SATURATE = np.max(data[sat_mask==True])
     header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     wcs = WCS(header)
         
@@ -226,8 +249,10 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
     pixel_center = (xcen, ycen)
     cutout = Cutout2D(data, position=pixel_center, size=cutout_size, wcs=wcs, mode='trim')
     cutout_mask = Cutout2D(mask, position=pixel_center, size=cutout_size, wcs=wcs, mode='trim')
+    
     ccddata = CCDData(cutout.data, wcs=cutout.wcs, unit='adu')
     ccddata.mask = cutout_mask.data
+    ccddata.meta['SATURATE'] = SATURATE
     return ccddata
 
 def lsst_cutout_to_ccddata(cutout, saveas=None):
@@ -249,9 +274,12 @@ def forced_phot(ra, dec, image, wcs, psf_data):
                             aperture_radius=5,
                             localbkg_estimator=None)
     phot = psfphot(image, init_params=init_params)
-
-    flux_njy = phot[0]['flux_fit']
-    flux_err = phot[0]['flux_err']
+    try:
+        flux_njy = phot[0]['flux_fit'].value
+        flux_err = phot[0]['flux_err'].value
+    except:
+        flux_njy = phot[0]['flux_fit']
+        flux_err = phot[0]['flux_err']
     mag = -2.5 * np.log10(flux_njy / 3631e9)
     magerr = (2.5 / np.log(10)) * (flux_err / flux_njy)
     upper_limit = -2.5 * np.log10(flux_err * 5 / 3631e9)
