@@ -130,12 +130,12 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     refdata_aligned = refdata
     
     # Calculate background
-    try:
-        _data = scidata.data.astype(np.float32)
-    except:
-        _data = scidata.data.byteswap().newbyteorder()
-    bkg = sep.Background(_data)
-    sci_global_bkg = bkg.globalback
+    #try:
+    #    _data = scidata.data.astype(np.float32)
+    #except:
+    #    _data = scidata.data.byteswap().newbyteorder()
+    #bkg = sep.Background(_data)
+    sci_global_bkg = 0 #bkg.globalback
     
     # Perform image subtraction
     logger.info('loading the science image')
