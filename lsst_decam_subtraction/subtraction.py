@@ -28,7 +28,7 @@ from .image_processing import (
     make_psf, 
     refine_wcs, 
     assemble_reference,
-    refine_wcs_astropy
+    refine_wcs_astropy,
 )
 from .reference_download import (
     download_decam_reference,
@@ -40,6 +40,12 @@ from astropy.nddata import CCDData
 from astropy import log
 logger = logging.getLogger("lsst_decam_subtraction")  # or __name__
 logger.setLevel(logging.INFO)
+
+des_pixel_scale = 0.262
+des_avg_fwhm = {'g':1.11, 
+                'r': 0.95, 
+                'i': 0.88, 
+                'z': 0.83}
 
 
 
@@ -170,47 +176,52 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
 
     return refdata_aligned, normalized_difference, sci_psf.data
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None):
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
+                        refine_wcs_ref=False):
     """
     Perform image subtraction on LSST DECam data.
     """
     
     image_filter = visit_image.filter.bandLabel
-    if (save_intermediate or save_original_temp) and science_filename is None:
-        visit_info = visit_image.getInfo().getVisitInfo()
-        visit_id = visit_info.getId()
-        detector_id = visit_image.getDetector().getId()
-        science_filename = f'{visit_id}_{detector_id}_{image_filter}.fits'
+    #if (save_intermediate or save_original_temp) and science_filename is None:
+    visit_info = visit_image.getInfo().getVisitInfo()
+    visit_id = visit_info.getId()
+    detector_id = visit_image.getDetector().getId()
+    science_filename = f'{visit_id}_{detector_id}_{image_filter}.fits'
+    
     # Read the science image
     if cutout:
-        _scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
+        scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
         #_scidata = lsst_cutout_to_ccddata(cutout)
     else:
-        _scidata = lsst_visit_to_ccddata(visit_image)
-    logger.info(f'science image saturation level: {_scidata.meta['SATURATE']}')
+        scidata = lsst_visit_to_ccddata(visit_image)
+        ra, dec = lsst_pixel_to_world(2036.0, 2000.0, visit_image)
+    logger.info(f'science image saturation level: {scidata.meta['SATURATE']}')
     if save_intermediate:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.orisci.fits'))
-            _scidata.write(_science_filename, overwrite=True)
-    nx, ny = _scidata.shape
-    half_ra, half_dec = astropy_pixel_to_world(nx//2, ny//2, _scidata.wcs)
+            scidata.write(_science_filename, overwrite=True)
+    nx, ny = scidata.shape
+    half_ra, half_dec = astropy_pixel_to_world(nx//2, ny//2, scidata.wcs)
 
     # Get Gaia/DES catalog for PSF modeling
     if reference_catalog == 'gaia':
-        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=_scidata, band=image_filter, radius_arcmin=11, mag_limit=reference_mag1)
+        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag_limit=reference_mag1)
         #we also need to query the DES catalog to the PSF FWHM of the DES template
-        _des_catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=_scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
-        des_fwhm = np.median(_des_catalog[f'{image_filter}FWHM'])
+        #_des_catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
+        des_fwhm = des_avg_fwhm[image_filter]/des_pixel_scale
     elif reference_catalog == 'des': 
-        catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=_scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
+        catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
         des_fwhm = np.median(catalog[f'{image_filter}FWHM'])
     logger.info(f'catalog size: {len(catalog)}')
     catalog['raMean'], catalog['decMean'] = catalog['ra'], catalog['dec']
 
+    if refine_wcs_sci:
     # Refine WCS for science image
-    logger.info(f"Using {len(catalog)} stars for WCS refinement")
-    scidata = _scidata.copy()
-    new_wcs, catalog = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fwhm=get_visit_fwhm(visit_image, ra, dec), fit_distortion=fit_distortion)
-    scidata.wcs = new_wcs
+        logger.info(f"Using {len(catalog)} stars for WCS refinement")
+        #scidata = _scidata.copy()
+        #new_wcs, catalog = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fwhm=get_visit_fwhm(visit_image, ra, dec), fit_distortion=fit_distortion)
+        new_wcs = lsst_refine_wcs_astropy(visit_image, catalog, projection='TAN', fit_distortion=None)
+        scidata.wcs = new_wcs
 
     if save_intermediate:
         _science_filename = os.path.join(workdir, science_filename)
@@ -219,11 +230,12 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     # Read science image PSF
     psf_flag = 0
     if make_sci_psf:
-        sci_psf, _ = make_psf(scidata, catalog, show=show)
         if len(catalog) < 5:
             logger.info('Too few stars, getting PSF from the visit_image')
             sci_psf = lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=cutout_size)
             psf_flag=1
+        else:
+            sci_psf, _ = make_psf(scidata, catalog, show=show)
     elif get_median_sci_psf:
         sci_psf = lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=cutout_size)
         psf_flag = 1
@@ -251,10 +263,11 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
         filename = os.path.join(workdir, template_filename)
         _refdata = read_with_datasec(filename)
         _refdata.meta['SATURATE'] = 65535
-    
-    # Refine WCS for reference image
-    new_wcs, catalog = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog, fwhm=des_fwhm, fit_distortion=fit_distortion)
-    _refdata.wcs = new_wcs
+
+    if refine_wcs_ref:
+        # Refine WCS for reference image
+        new_wcs, catalog = refine_wcs_astropy(_refdata.data, _refdata.wcs, catalog, fwhm=des_fwhm, fit_distortion=fit_distortion)
+        _refdata.wcs = new_wcs
 
     # Calculate background
     try:

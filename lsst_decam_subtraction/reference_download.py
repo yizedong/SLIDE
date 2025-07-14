@@ -63,7 +63,7 @@ def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     ccddata.meta['SATURATE'] = header['SATURATE']
     return ccddata
 
-def gaia3cat(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_limit=50, nrows=500):
+def gaia3cat_old(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_limit=50, nrows=500):
     """
     Query Gaia DR3 catalog for stars within a specified radius.
     
@@ -117,6 +117,69 @@ def gaia3cat(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_li
     catalog = catalog[mask]
     return catalog
 
+def gaia3cat(ra, dec, ccddata=None, band='r', radius_arcmin=10, mag_limit=21.0, pm_limit=None, nrows=300):
+    """
+    Query Gaia DR3 catalog using a rectangular (box) query for stars around a given sky position.
+
+    Parameters
+    ----------
+    ra : float
+        Right ascension in degrees.
+    dec : float
+        Declination in degrees.
+    ccddata : CCDData, optional
+        If provided, stars outside the CCD frame will be excluded.
+    band : str, optional
+        Observing band to choose Gaia magnitude column ('bp', 'rp', or 'g'). Default: 'r' -> 'rp'.
+    radius_arcmin : float, optional
+        Search box size in arcminutes (default: 10). Width is declination-corrected.
+    mag_limit : float, optional
+        Maximum magnitude to include (default: 21.0).
+    pm_limit : float or None, optional
+        If given, exclude sources with total proper motion above this value (mas/yr).
+    nrows : int, optional
+        Maximum number of rows to retrieve from Gaia (default: 300).
+
+    Returns
+    -------
+    catalog : astropy.table.Table
+        Filtered Gaia catalog.
+    """
+    Gaia.ROW_LIMIT = nrows
+
+    coord = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+    height = u.Quantity(radius_arcmin*2, u.arcmin)
+    width = u.Quantity(radius_arcmin*2 / np.cos(np.radians(dec)), u.arcmin)
+
+    catalog = Gaia.query_object_async(coordinate=coord, width=width, height=height)
+
+    # Choose Gaia magnitude column based on band
+    if band in ['u', 'g']:
+        mag_column = 'phot_bp_mean_mag'
+    elif band in ['r', 'i', 'z']:
+        mag_column = 'phot_rp_mean_mag'
+    else:
+        mag_column = 'phot_g_mean_mag'
+
+    # Apply filters
+    mask = np.isfinite(catalog[mag_column]) & (catalog[mag_column] > mag_limit)
+    mask &= catalog['astrometric_excess_noise_sig'] < 2
+    if pm_limit is not None:
+        total_pm = np.hypot(catalog['pmra'], catalog['pmdec'])
+        mask &= total_pm < pm_limit
+
+    catalog = catalog[mask]
+
+    # Clip to CCD footprint if ccddata is provided
+    if ccddata is not None:
+        nx, ny = ccddata.shape
+        x, y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], ccddata.wcs)
+        margin = 25 // 2
+        spatial_mask = (x > margin) & (x < nx - margin) & (y > margin) & (y < ny - margin)
+        catalog = catalog[spatial_mask]
+
+    return catalog
+
 def des2cat(ra, dec, ccddata, band='r', radius_arcmin=11, mag1=16, mag2=21):
     radius = radius_arcmin
     coord = SkyCoord(ra=ra, dec=dec, unit=(u.degree, u.degree))
@@ -147,3 +210,41 @@ def des2cat(ra, dec, ccddata, band='r', radius_arcmin=11, mag1=16, mag2=21):
     )
     catalog = catalog[mask]
     return catalog
+
+def apass2cat(ra, dec, ccddata, band='r', radius_arcmin=11):
+    """
+    Query APASS DR9 catalog and return sources within image bounds and mag range.
+    
+    Parameters:
+        ra, dec (float): Target sky coordinates (degrees).
+        ccddata (CCDData): Image with WCS info.
+        band (str): Photometric band, one of 'B', 'V', 'g', 'r', 'i'.
+        radius_arcmin (float): Search radius in arcminutes.
+        mag1, mag2 (float): Magnitude range.
+
+    Returns:
+        Table: Filtered APASS catalog entries within image and mag range.
+    """
+    coord = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg))
+    Vizier.ROW_LIMIT = -1
+    
+    # Set up Vizier filters
+    mag_col = f"{band}mag"
+    Vizier.columns = ['RAJ2000', 'DEJ2000', "g'mag", "r'mag", "i'mag"] #, "g'mag", "r'mag", "i'mag"
+    #Vizier.column_filters = {mag_col: f">{mag1:.2f} && <={mag2:.2f}"}
+
+    # Query APASS DR9
+    result = Vizier.query_region(coord, radius=radius_arcmin*u.arcmin, catalog="II/336/apass9")
+    if len(result) == 0:
+        return None
+
+    apass_table = result[0]
+    apass_table['ra'] = apass_table['RAJ2000']
+    apass_table['dec'] = apass_table['DEJ2000']
+
+    # Project to pixel coordinates and filter by image bounds
+    nx, ny = ccddata.shape
+    x, y = astropy_world_to_pixel(apass_table['ra'], apass_table['dec'], ccddata.wcs)
+    margin = 25 // 2
+    mask = (x > margin) & (x < nx - margin) & (y > margin) & (y < ny - margin)
+    return apass_table[mask]

@@ -20,6 +20,7 @@ from photutils.background import LocalBackground, MMMBackground
 from photutils.detection import DAOStarFinder
 from photutils.psf import PSFPhotometry
 from astropy.nddata import Cutout2D
+from astropy.wcs.utils import fit_wcs_from_points
 
 
 def query_lsst_visits(butler, ra, dec, band, time1, time2):
@@ -88,8 +89,9 @@ def lsst_bad_mask(visit_image, mask_type = []):
 
 def lsst_visit_to_ccddata(visit_image, saveas=None):
     data = visit_image.image.array
-    header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
-    wcs = WCS(header)
+    #header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
+    #wcs = WCS(header)
+    wcs = lsst_refine_wcs_astropy(visit_image, n_points=10)
     mask = lsst_bad_mask(visit_image)
     
     sat_mask = lsst_bad_mask(visit_image, mask_type = ['SAT'])
@@ -171,7 +173,7 @@ def lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=(2000, 2000), sam
 
 def lsst_world_to_pixel(ra, dec, visit_image):
     wcs = visit_image.wcs
-    if isinstance(ra, float):
+    if isinstance(ra, (int, float)):
         spherePoint = lsst.geom.SpherePoint(ra*geom.degrees, dec*geom.degrees)
         pixel_coord = wcs.skyToPixel(spherePoint)
         x = pixel_coord.getX()
@@ -185,7 +187,7 @@ def lsst_world_to_pixel(ra, dec, visit_image):
 
 def lsst_pixel_to_world(x, y, visit_image):
     wcs = visit_image.wcs
-    if isinstance(x, int):
+    if isinstance(x, (int, float)):
         pixel = geom.Point2D(x, y)
         sky_coord = wcs.pixelToSky(pixel)
         ra = sky_coord.getRa().asDegrees()
@@ -206,6 +208,24 @@ def astropy_pixel_to_world(x, y, wcs, origin=0):
     skycoord = pixel_to_skycoord(x, y, wcs, origin=origin)
     return skycoord.ra.deg, skycoord.dec.deg
 
+def lsst_refine_wcs_astropy(visit_image, n_points=10, projection='TAN', fit_distortion=None):
+
+    ny, nx = visit_image.image.array.shape
+    # Sample pixel grid
+    x_vals = np.linspace(25, nx - 25, n_points)
+    y_vals = np.linspace(25, ny - 25, n_points)
+    xx, yy = np.meshgrid(x_vals, y_vals)
+    matched_x = xx.ravel()
+    matched_y = yy.ravel()
+
+    ra, dec = lsst_pixel_to_world(matched_x, matched_y, visit_image)
+    
+    sky_coords = SkyCoord(ra=ra, dec=dec, unit='deg')
+    #matched_x, matched_y = lsst_world_to_pixel(catalog['ra'], catalog['dec'], visit_image)
+    #matched_x = np.asarray(matched_x)
+    #matched_y = np.asarray(matched_y)
+    new_wcs = fit_wcs_from_points(xy=(matched_x, matched_y), world_coords=sky_coords, projection=projection, sip_degree=fit_distortion)
+    return new_wcs
 
 def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
     """
@@ -232,8 +252,9 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
     finite_values = masked_values[np.isfinite(masked_values)]
     SATURATE = np.nanmax(finite_values) if finite_values.size > 0 else 60000
     #SATURATE = np.max(data[sat_mask==True])
-    header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
-    wcs = WCS(header)
+    #header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
+    #wcs = WCS(header)
+    wcs = lsst_refine_wcs_astropy(visit_image, n_points=10)
         
     xcen, ycen = astropy_world_to_pixel(ra, dec, wcs)
 

@@ -16,7 +16,7 @@ import scipy.optimize
 import warnings
 from astropy.wcs.utils import fit_wcs_from_points
 import sep
-from .lsst_utils import astropy_world_to_pixel
+from .lsst_utils import astropy_world_to_pixel, lsst_world_to_pixel, lsst_pixel_to_world
 
 def read_with_datasec(filename, hdu=0):
     """
