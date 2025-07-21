@@ -91,6 +91,18 @@ def make_psf(data, catalog, show=False, boxsize=25, oversampling=1, center_accur
     _catalog = catalog.copy()
     coords = SkyCoord(_catalog['ra'], _catalog['dec'], unit='deg')
     _catalog['x'], _catalog['y'] = skycoord_to_pixel(coords, data.wcs, origin=0)
+
+    good_mask = []
+    for x, y in zip(_catalog['x'], _catalog['y']):
+        x = int(np.round(x))
+        y = int(np.round(y))
+        # If any pixel in the cutout is masked, reject it
+        if data.mask is not None and np.any(data.mask[y-1:y+1,
+                                                      x-1:x+1]):
+            good_mask.append(False)
+        else:
+            good_mask.append(True)
+    _catalog = _catalog[good_mask]
     
     bkg = np.nanmedian(data.data)
     nddata = NDData(data.data - bkg)
@@ -305,6 +317,7 @@ def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, order='bicubic'):
         Assembled reference image
     """
     refdatas_reprojected = []
+    mask_stack = []
     refdata_foot = np.zeros(shape, float)
     for data in refdatas:
         #reprojected, foot = reproject_interp((data.data, data.wcs), wcs, shape, order=order)
@@ -313,9 +326,19 @@ def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, order='bicubic'):
         refdatas_reprojected.append(reprojected)
         refdata_foot += foot
 
-    refdata_reproj = np.nanmean(refdatas_reprojected, axis=0)
+        if data.mask is not None:
+            # Use nearest-neighbor interpolation for boolean mask
+            mask_reproj, _ = reproject_interp((data.mask.astype(float), data.wcs), wcs, shape)
+            mask_stack.append(mask_reproj > 0.5)
+    # Combine masks if available
+    if mask_stack:
+        combined_mask = np.any(mask_stack, axis=0)
+    else:
+        combined_mask = np.zeros(shape, dtype=bool)
+    refdata_reproj = np.nanmedian(refdatas_reprojected, axis=0)
     if np.all(np.isnan(refdata_reproj)):
         raise ValueError("All reprojected reference data is NaN.")
     refdata_reproj[np.isnan(refdata_reproj)] = ref_global_bkg
-    refdata = CCDData(refdata_reproj, wcs=wcs, mask=refdata_foot == 0., unit='adu')
+    final_mask = (refdata_foot == 0.) | combined_mask
+    refdata = CCDData(refdata_reproj, wcs=wcs, mask=final_mask, unit='adu')
     return refdata 

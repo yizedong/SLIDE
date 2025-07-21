@@ -38,6 +38,10 @@ from .reference_download import (
 from .lsst_utils import query_lsst_visits, lsst_pixel_to_world, lsst_world_to_pixel, astropy_world_to_pixel, astropy_pixel_to_world, lsst_visit_to_ccddata, lsst_visit_to_psf, lsst_cutout_to_ccddata, safe_cutout2d, lsst_visit_to_psf_median, get_visit_fwhm
 from astropy.nddata import CCDData
 from astropy import log
+import gc 
+import psutil
+import os
+import time
 logger = logging.getLogger("lsst_decam_subtraction")  # or __name__
 logger.setLevel(logging.INFO)
 
@@ -48,6 +52,35 @@ des_avg_fwhm = {'g':1.11,
                 'z': 0.83}
 
 
+
+def get_memory_usage_gb_cgroup2():
+    try:
+        with open("/sys/fs/cgroup/memory.current") as f:
+            usage_bytes = int(f.read())
+        return usage_bytes / 1e9  # Convert to GB
+    except FileNotFoundError:
+        return None
+
+def wait_for_cgroup_memory(threshold_gb=14.0, check_interval=10):
+    """
+    Wait until container memory usage (cgroup v2) is below a given threshold.
+    
+    Parameters
+    ----------
+    threshold_gb : float
+        Max allowed memory usage in GB before pausing.
+    check_interval : int
+        Seconds to wait before checking again.
+    """
+    while True:
+        mem_gb = get_memory_usage_gb_cgroup2()
+        if mem_gb is None:
+            print("[Memory Watch] Could not determine memory usage. Proceeding without waiting.")
+            break
+        if mem_gb < threshold_gb:
+            break
+        print(f"[Memory Watch] Memory usage is {mem_gb:.2f} GB, waiting to drop below {threshold_gb:.2f} GB...")
+        time.sleep(check_interval)
 
 
 def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_wcs, normalization, output):
@@ -81,7 +114,7 @@ def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_
     logging.info('Wrote difference image to {}'.format(output))
 
 
-def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg, sci_header=None, save_intermediate=False, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True):
+def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg, sci_header=None, save_intermediate=False, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True, return_output=True, protect_mem=True):
     """
     Perform image subtraction on LSST DECam data.
     
@@ -147,6 +180,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     logger.info('loading the science image')
     science = ImageClass(scidata, sci_psf.data, scidata.mask, saturation=scidata.meta['SATURATE'])
     science = np.nan_to_num(science, nan=sci_global_bkg) #visit images are already bkg subtracted
+
     #science.background_counts = np.zeros_like(science.background_counts)
     #print(science.background_counts, science.background_std)
 
@@ -157,37 +191,52 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     #print(reference.background_counts, reference.background_std)
     #reference.data = np.nan_to_num(reference.data, nan=ref_global_bkg)
     reference = np.nan_to_num(reference, nan=ref_global_bkg)
+    combined_mask = reference.mask | scidata.mask
+    output_wcs = scidata.wcs  # Save before deleting
+    if not return_output:
+        del scidata, refdata_aligned
+        gc.collect()
 
     logger.info('calculating the difference image')
+    logger.info(f'current memory usage: {get_memory_usage_gb_cgroup2()}')
+    if protect_mem:
+        wait_for_cgroup_memory(threshold_gb=15, check_interval=15)
     difference = calculate_difference_image(science, reference, show=show, max_iterations=max_iterations, sigma_cut=sigma_cut, gain_ratio=gain_ratio, percent=percent, use_pixels=use_pixels, size_cut=size_cut)
     difference_zero_point = calculate_difference_image_zero_point(science, reference)
     normalized_difference = normalize_difference_image(difference, difference_zero_point, science, reference, 'i')
+    del science, reference, difference
+    gc.collect()
+    logger.info(f"Image subtraction completed successfully!")
     if save_diff:
         output_filename = os.path.join(workdir, science_filename.replace('.fits', '.diff.fits'))
         #save_difference_image_lsst(normalized_difference, sci_header[0], sci_header[1], 'i', output_filename)
-        hdu = fits.PrimaryHDU(normalized_difference, header=scidata.wcs.to_header())
-        hdu.writeto(output_filename, overwrite=True)
-    normalized_difference = CCDData(normalized_difference, wcs=scidata.wcs, unit='adu')
-    combined_mask = reference.mask | scidata.mask
-    #normalized_difference = np.where(combined_mask, np.nan, normalized_difference)
-    normalized_difference.mask = combined_mask
-    
-    logger.info(f"Image subtraction completed successfully!")
+        primary_hdu = fits.PrimaryHDU(normalized_difference, header=output_wcs.to_header())
+        mask_data = np.array(combined_mask, dtype=np.uint8)
+        mask_hdu = fits.ImageHDU(mask_data, name='MASK')
+        psf_data = sci_psf.data
+        psf_hdu = fits.ImageHDU(psf_data, name='PSF')
+        hdul = fits.HDUList([primary_hdu, mask_hdu, psf_hdu])
+        hdul.writeto(output_filename, overwrite=True)
+    if return_output:
+        normalized_difference = CCDData(normalized_difference, wcs=output_wcs, unit='adu')
+        #normalized_difference = np.where(combined_mask, np.nan, normalized_difference)
+        normalized_difference.mask = combined_mask
+        return refdata_aligned, normalized_difference, sci_psf.data
+    else:
+        return None
 
-    return refdata_aligned, normalized_difference, sci_psf.data
-
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=True, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
-                        refine_wcs_ref=False):
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False, refine_wcs_ref=False):
     """
     Perform image subtraction on LSST DECam data.
     """
     
     image_filter = visit_image.filter.bandLabel
-    #if (save_intermediate or save_original_temp) and science_filename is None:
-    visit_info = visit_image.getInfo().getVisitInfo()
-    visit_id = visit_info.getId()
-    detector_id = visit_image.getDetector().getId()
-    science_filename = f'{visit_id}_{detector_id}_{image_filter}.fits'
+    #if (save_intermediate or save_original_temp) and science_filename is None:\
+    if science_filename is None:
+        visit_info = visit_image.getInfo().getVisitInfo()
+        visit_id = visit_info.getId()
+        detector_id = visit_image.getDetector().getId()
+        science_filename = f'{visit_id}_{detector_id}_{image_filter}.fits'
     
     # Read the science image
     if cutout:
@@ -197,9 +246,9 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
         scidata = lsst_visit_to_ccddata(visit_image)
         ra, dec = lsst_pixel_to_world(2036.0, 2000.0, visit_image)
     logger.info(f'science image saturation level: {scidata.meta['SATURATE']}')
-    if save_intermediate:
-            _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.orisci.fits'))
-            scidata.write(_science_filename, overwrite=True)
+    #if save_intermediate:
+    #        _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.orisci.fits'))
+    #        scidata.write(_science_filename, overwrite=True)
     nx, ny = scidata.shape
     half_ra, half_dec = astropy_pixel_to_world(nx//2, ny//2, scidata.wcs)
 
@@ -219,8 +268,8 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     # Refine WCS for science image
         logger.info(f"Using {len(catalog)} stars for WCS refinement")
         #scidata = _scidata.copy()
-        #new_wcs, catalog = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fwhm=get_visit_fwhm(visit_image, ra, dec), fit_distortion=fit_distortion)
-        new_wcs = lsst_refine_wcs_astropy(visit_image, catalog, projection='TAN', fit_distortion=None)
+        new_wcs, catalog = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fwhm=get_visit_fwhm(visit_image, ra, dec), fit_distortion=fit_distortion)
+        #new_wcs = lsst_refine_wcs_astropy(visit_image, catalog, projection='TAN', fit_distortion=None)
         scidata.wcs = new_wcs
 
     if save_intermediate:
@@ -245,14 +294,14 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     if show and psf_flag==1:
         fig, ax1 = plt.subplots(1, 1, figsize=(5, 5))
         norm = ImageNormalize(sci_psf, PercentileInterval(98))
-        ax1.imshow(sci_psf, norm=norm, origin='lower')
+        ax1.imshow(sci_psf, norm=norm)
         ax1.set_title('Science PSF')
 
     # Get reference image
     if download_DES_temp:
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading DES template")
-        _refdata = download_decam_reference(ra=half_ra, dec=half_dec, fov=0.3, filt=image_filter)
+        _refdata = download_decam_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
         if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
@@ -262,6 +311,8 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
             raise ValueError("Template filename must be provided when not downloading")
         filename = os.path.join(workdir, template_filename)
         _refdata = read_with_datasec(filename)
+        _ref_mask = CCDData.read('test.fits', format='fits', unit='adu', hdu=1)
+        _refdata.mask=_ref_mask
         _refdata.meta['SATURATE'] = 65535
 
     if refine_wcs_ref:
@@ -285,10 +336,10 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     if save_intermediate:
         _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
         refdata_aligned.write(_template_filename, overwrite=True)
-    refdata_aligned.mask = np.logical_or(scidata.mask, refdata_aligned.mask)
     # Get reference PSF
     logger.info(f'Making PSF for the template image')
     ref_psf, _ = make_psf(refdata_aligned, catalog, show=show)
+    #refdata_aligned.mask = np.logical_or(scidata.mask, refdata_aligned.mask)
 
     #scidata.data[scidata.mask] = 0
     scidata.meta['filename'] = science_filename

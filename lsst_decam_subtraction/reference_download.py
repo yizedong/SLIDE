@@ -21,46 +21,63 @@ from .lsst_utils import astropy_world_to_pixel
 
 def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     """
-    Download DECam reference image from NOIRLab Data Lab.
-    
+    Download DECam reference image and mask from NOIRLab Data Lab and optionally save to a single FITS file.
+
     Parameters
     ----------
     ra, dec : float
-        Coordinates in degrees
+        Coordinates in degrees.
     fov : float, optional
-        Field of view in degrees (default: 0.2)
+        Field of view in degrees (default: 0.2).
     filt : str, optional
-        Filter band (default: 'g')
+        Filter band (default: 'g').
     saveas : str, optional
-        Path to save file (default: do not save)
-        
+        Path to save combined FITS file (image + mask in HDUs).
+
     Returns
     -------
     CCDData
-        Image data with WCS
+        Image data with mask and WCS.
     """
     DEF_ACCESS_URL = "https://datalab.noirlab.edu/sia/des_dr2"
     svc_des_dr2 = sia.SIAService(DEF_ACCESS_URL)
-    imgTable = svc_des_dr2.search((ra,dec), (fov/np.cos(dec*np.pi/180), fov), verbosity=2).to_table()
-    sel = (imgTable['proctype'].astype(str)=='Stack') & (imgTable['prodtype'].astype(str)=='image') & (startswith(imgTable['obs_bandpass'].astype(str),filt))
-    row = imgTable[sel][0]
-    url = row['access_url']
-    response = requests.get(url)
-    if response.status_code == 200:
-        hdul = fits.open(BytesIO(response.content))
-        #hdul.info()  # See FITS file structure
+    imgTable = svc_des_dr2.search((ra, dec), (fov / np.cos(np.radians(dec)), fov), verbosity=2).to_table()
+
+    # Filter for proper image entries
+    sel = (
+        (imgTable['proctype'].astype(str) == 'Stack') &
+        (imgTable['prodtype'].astype(str) == 'image') &
+        (startswith(imgTable['obs_bandpass'].astype(str), filt))
+    )
+    selected = imgTable[sel]
+    if len(selected) < 2:
+        raise ValueError("Expected at least 2 rows (image + mask), but found fewer.")
+
+    # --- Science image ---
+    img_url = selected[0]['access_url']
+    response = requests.get(img_url)
+    response.raise_for_status()
+    with fits.open(BytesIO(response.content)) as hdul:
         data = hdul[0].data
         header = hdul[0].header
-        hdul.close()
-        if saveas is not None:
-            with fits.open(BytesIO(response.content)) as hdul:
-                hdul.info()  # View structure
-                hdul.writeto(saveas, overwrite=True)  # Save to disk
-    else:
-        print(f"Failed to fetch FITS file: {response.status_code}")
-    
-    ccddata = CCDData(data, wcs=WCS(header), unit='adu')
-    ccddata.meta['SATURATE'] = header['SATURATE']
+
+    # --- Mask ---
+    mask_url = selected[1]['access_url']
+    response = requests.get(mask_url)
+    response.raise_for_status()
+    with fits.open(BytesIO(response.content)) as hdul:
+        mask_data = hdul[0].data.astype(bool)
+
+    # --- Save combined FITS file if requested ---
+    if saveas:
+        hdu_image = fits.PrimaryHDU(data=data, header=header)
+        hdu_mask = fits.ImageHDU(data=mask_data.astype(np.uint8), name='mask')  # Save mask as 0/1 integers
+        fits.HDUList([hdu_image, hdu_mask]).writeto(saveas, overwrite=True)
+
+    # --- Create CCDData ---
+    ccddata = CCDData(data, wcs=WCS(header), unit='adu', mask=mask_data)
+    ccddata.meta['SATURATE'] = header.get('SATURATE', np.inf)
+
     return ccddata
 
 def gaia3cat_old(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_limit=50, nrows=500):
