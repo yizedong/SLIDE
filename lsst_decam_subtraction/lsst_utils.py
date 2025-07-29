@@ -61,7 +61,7 @@ def query_lsst_visits(butler, ra, dec, band, time1, time2):
                                          order_by=["visit.timespan.begin"])
     return dataset_refs
 
-def lsst_bad_mask(visit_image, mask_type = []):
+def lsst_bad_mask(visit_image, mask_type = ['']):
     mask = visit_image.mask.array
     if len(mask_type) == 0:
         bitmask = visit_image.mask.getPlaneBitMask([
@@ -87,12 +87,12 @@ def lsst_bad_mask(visit_image, mask_type = []):
     image_mask = (visit_image.mask.array & bitmask) != 0
     return image_mask
 
-def lsst_visit_to_ccddata(visit_image, saveas=None):
+def lsst_visit_to_ccddata(visit_image, mask_type = ["BAD", "SAT", "INTRP", "CR", "EDGE", "SUSPECT", "NO_DATA", "SENSOR_EDGE", "CLIPPED", "CROSSTALK", "UNMASKEDNAN", "STREAK"], saveas=None):
     data = visit_image.image.array
     #header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     #wcs = WCS(header)
     wcs = lsst_refine_wcs_astropy(visit_image, n_points=10)
-    mask = lsst_bad_mask(visit_image)
+    mask = lsst_bad_mask(visit_image, mask_type=mask_type)
     
     sat_mask = lsst_bad_mask(visit_image, mask_type = ['SAT'])
     masked_values = data[sat_mask] 
@@ -227,7 +227,7 @@ def lsst_refine_wcs_astropy(visit_image, n_points=10, projection='TAN', fit_dist
     new_wcs = fit_wcs_from_points(xy=(matched_x, matched_y), world_coords=sky_coords, projection=projection, sip_degree=fit_distortion)
     return new_wcs
 
-def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
+def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000), mask_type = ["BAD", "SAT", "INTRP", "CR", "EDGE", "SUSPECT", "NO_DATA", "SENSOR_EDGE", "CLIPPED", "CROSSTALK", "UNMASKEDNAN", "STREAK"]):
     """
     Create a Cutout2D that contains the original RA/Dec, shifting inward if near the edge.
 
@@ -246,7 +246,7 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000)):
         cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
 
     data = visit_image.image.array
-    mask = lsst_bad_mask(visit_image)
+    mask = lsst_bad_mask(visit_image, mask_type = mask_type)
     sat_mask = lsst_bad_mask(visit_image, mask_type = ['SAT'])
     masked_values = data[sat_mask] 
     finite_values = masked_values[np.isfinite(masked_values)]
@@ -289,18 +289,22 @@ def forced_phot(ra, dec, image, wcs, psf_data):
     _x, _y = astropy_world_to_pixel(ra, dec, wcs)
     init_params['x'] = [_x]
     init_params['y'] = [_y]
-    
     fit_shape = (5,5)
+    #bkgstat = MMMBackground()
+    #localbkg_estimator = LocalBackground(5, 10, bkgstat)
     psfphot = PSFPhotometry(psf_model, fit_shape,
-                            aperture_radius=5,
+                            aperture_radius=7,
                             localbkg_estimator=None)
-    phot = psfphot(image, init_params=init_params)
-    try:
-        flux_njy = phot[0]['flux_fit'].value
-        flux_err = phot[0]['flux_err'].value
-    except:
-        flux_njy = phot[0]['flux_fit']
-        flux_err = phot[0]['flux_err']
+    phot = psfphot(image.data, init_params=init_params)
+    if phot[0]['flux_fit'] / phot[0]['flux_err'] <= 3 or phot[0]['flux_err'] == 0:
+        psf_model.x_0.fixed = True
+        psf_model.y_0.fixed = True
+        psfphot = PSFPhotometry(psf_model, fit_shape,
+                            aperture_radius=7,
+                            localbkg_estimator=None)
+        phot = psfphot(image.data, init_params=init_params)
+    flux_njy = phot[0]['flux_fit']
+    flux_err = phot[0]['flux_err']
     mag = -2.5 * np.log10(flux_njy / 3631e9)
     magerr = (2.5 / np.log(10)) * (flux_err / flux_njy)
     upper_limit = -2.5 * np.log10(flux_err * 5 / 3631e9)

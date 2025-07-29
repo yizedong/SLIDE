@@ -12,6 +12,7 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs.utils import skycoord_to_pixel
 from astropy.visualization import PercentileInterval, ImageNormalize
+from astropy.nddata import Cutout2D
 import logging
 from PyZOGY.subtract import (
     calculate_difference_image, 
@@ -82,6 +83,15 @@ def wait_for_cgroup_memory(threshold_gb=14.0, check_interval=10):
         print(f"[Memory Watch] Memory usage is {mem_gb:.2f} GB, waiting to drop below {threshold_gb:.2f} GB...")
         time.sleep(check_interval)
 
+def cut_diff_psf(difference_psf):
+    real_part = np.real(difference_psf)
+    center = np.array(real_part.shape) / 2
+    centered_psf = np.roll(real_part, center.astype(int), (0, 1))
+    
+    #ny, nx = centered_psf.shape
+    #center = (nx // 2, ny // 2)
+    #cutout = Cutout2D(centered_psf, position=center, size=(25, 25))
+    return centered_psf#cutout.data
 
 def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_wcs, normalization, output):
     """
@@ -114,7 +124,7 @@ def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_
     logging.info('Wrote difference image to {}'.format(output))
 
 
-def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg, sci_header=None, save_intermediate=False, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True, return_output=True, protect_mem=True):
+def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, save_intermediate=False, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True, return_output=True, protect_mem=True):
     """
     Perform image subtraction on LSST DECam data.
     
@@ -149,23 +159,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
 
     if save_diff and science_filename is None:
         science_filename = scidata.meta['filename']
-    """
-    # Calculate background
-    try:
-        _data = refdata.data.astype(np.float32)
-    except:
-        _data = refdata.data.byteswap().newbyteorder()
-    bkg = sep.Background(_data)
-    ref_global_bkg = bkg.globalback
 
-    # Assemble reference image
-    logger.info('align the template with the science image')
-    refdata_aligned = assemble_reference([refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg)
-    
-    if save_intermediate and science_filename is not None:
-        _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
-        refdata_aligned.write(_template_filename, overwrite=True)
-    """
     refdata_aligned = refdata
     
     # Calculate background
@@ -181,16 +175,11 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     science = ImageClass(scidata, sci_psf.data, scidata.mask, saturation=scidata.meta['SATURATE'])
     science = np.nan_to_num(science, nan=sci_global_bkg) #visit images are already bkg subtracted
 
-    #science.background_counts = np.zeros_like(science.background_counts)
-    #print(science.background_counts, science.background_std)
 
     refdata_aligned.mask[np.isnan(refdata_aligned.data)] = True
     logger.info('loading the template image')
     reference = ImageClass(refdata_aligned, ref_psf.data, refdata_aligned.mask, saturation=refdata_aligned.meta['SATURATE'])
-    #reference.background_counts = np.zeros_like(reference.background_counts)
-    #print(reference.background_counts, reference.background_std)
-    #reference.data = np.nan_to_num(reference.data, nan=ref_global_bkg)
-    reference = np.nan_to_num(reference, nan=ref_global_bkg)
+    reference = np.nan_to_num(reference, nan=refdata_aligned.meta['ref_global_bkg'])
     combined_mask = reference.mask | scidata.mask
     output_wcs = scidata.wcs  # Save before deleting
     if not return_output:
@@ -209,11 +198,10 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     logger.info(f"Image subtraction completed successfully!")
     if save_diff:
         output_filename = os.path.join(workdir, science_filename.replace('.fits', '.diff.fits'))
-        #save_difference_image_lsst(normalized_difference, sci_header[0], sci_header[1], 'i', output_filename)
         primary_hdu = fits.PrimaryHDU(normalized_difference, header=output_wcs.to_header())
         mask_data = np.array(combined_mask, dtype=np.uint8)
         mask_hdu = fits.ImageHDU(mask_data, name='MASK')
-        psf_data = sci_psf.data
+        psf_data = sci_psf.data #cutout_difference_psf#
         psf_hdu = fits.ImageHDU(psf_data, name='PSF')
         hdul = fits.HDUList([primary_hdu, mask_hdu, psf_hdu])
         hdul.writeto(output_filename, overwrite=True)
@@ -225,13 +213,15 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, ref_global_bkg
     else:
         return None
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False, refine_wcs_ref=False):
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
+                        refine_wcs_ref=False, mask_type = []):
     """
     Perform image subtraction on LSST DECam data.
     """
-    
+    if len(mask_type) == 0:
+        mask_type = ["BAD", "SAT", "INTRP", "CR", "EDGE", "SUSPECT", "NO_DATA", "SENSOR_EDGE", "CLIPPED", "CROSSTALK", "UNMASKEDNAN", "STREAK"]
     image_filter = visit_image.filter.bandLabel
-    #if (save_intermediate or save_original_temp) and science_filename is None:\
+
     if science_filename is None:
         visit_info = visit_image.getInfo().getVisitInfo()
         visit_id = visit_info.getId()
@@ -240,23 +230,18 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     
     # Read the science image
     if cutout:
-        scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size)
-        #_scidata = lsst_cutout_to_ccddata(cutout)
+        scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size, mask_type = mask_type)
     else:
-        scidata = lsst_visit_to_ccddata(visit_image)
+        scidata = lsst_visit_to_ccddata(visit_image, mask_type = mask_type)
         ra, dec = lsst_pixel_to_world(2036.0, 2000.0, visit_image)
     logger.info(f'science image saturation level: {scidata.meta['SATURATE']}')
-    #if save_intermediate:
-    #        _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.orisci.fits'))
-    #        scidata.write(_science_filename, overwrite=True)
+
     nx, ny = scidata.shape
     half_ra, half_dec = astropy_pixel_to_world(nx//2, ny//2, scidata.wcs)
 
     # Get Gaia/DES catalog for PSF modeling
     if reference_catalog == 'gaia':
         catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag_limit=reference_mag1)
-        #we also need to query the DES catalog to the PSF FWHM of the DES template
-        #_des_catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
         des_fwhm = des_avg_fwhm[image_filter]/des_pixel_scale
     elif reference_catalog == 'des': 
         catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
@@ -267,9 +252,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     if refine_wcs_sci:
     # Refine WCS for science image
         logger.info(f"Using {len(catalog)} stars for WCS refinement")
-        #scidata = _scidata.copy()
         new_wcs, catalog = refine_wcs_astropy(scidata.data, scidata.wcs, catalog, fwhm=get_visit_fwhm(visit_image, ra, dec), fit_distortion=fit_distortion)
-        #new_wcs = lsst_refine_wcs_astropy(visit_image, catalog, projection='TAN', fit_distortion=None)
         scidata.wcs = new_wcs
 
     if save_intermediate:
@@ -328,7 +311,6 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     bkg = sep.Background(_data)
     ref_global_bkg = bkg.globalback
 
-
     # Assemble reference image
     logger.info('align the template with the science image')
     refdata_aligned = assemble_reference([_refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg)
@@ -336,14 +318,14 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     if save_intermediate:
         _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
         refdata_aligned.write(_template_filename, overwrite=True)
+        
     # Get reference PSF
     logger.info(f'Making PSF for the template image')
     ref_psf, _ = make_psf(refdata_aligned, catalog, show=show)
-    #refdata_aligned.mask = np.logical_or(scidata.mask, refdata_aligned.mask)
 
-    #scidata.data[scidata.mask] = 0
     scidata.meta['filename'] = science_filename
-    return scidata, refdata_aligned, sci_psf, ref_psf, ref_global_bkg
+    refdata_aligned.meta['ref_global_bkg'] = ref_global_bkg
+    return scidata, refdata_aligned, sci_psf, ref_psf
 
 
 
@@ -429,82 +411,3 @@ def local_data_load(ra=None, dec=None, science_filename=None, template_filename=
     return scidata, refdata, sci_psf, ref_psf
 
 
-
-
-
-def main():
-    """Main command-line interface."""
-    description = "LSST DECam Image Subtraction Tool"
-    usage = "%(prog)s [options]"
-    parser = argparse.ArgumentParser(usage=usage, description=description)
-    
-    # Required arguments
-    parser.add_argument("--targimg", dest="targimg", required=True,
-                       help='Name of the science image file')
-    
-    # Optional arguments
-    parser.add_argument("--tempimg", dest="tempimg", default=None,
-                       help='Name of the template image file (if not downloading)')
-    parser.add_argument("--imgdir", dest="imgdir", default='./',
-                       help='Path to the images directory (default: ./)')
-    parser.add_argument("--ra", dest="ra", type=float, default=None,
-                       help='RA of the object (used for querying reference image)')
-    parser.add_argument("--dec", dest="dec", type=float, default=None,
-                       help='DEC of the object (used for querying reference image)')
-    parser.add_argument("--filter", dest="filt", default=None,
-                       help='Filter of the image')
-    parser.add_argument("--sigma_cut", dest="sigma_cut", type=float, default=5,
-                       help='Sigma cut for the difference imaging stage (default: 5)')
-    parser.add_argument("--show", dest="show", action="store_true",
-                       default=False, help='Show results (default: False)')
-    parser.add_argument("--download_DES_temp", dest="download_DES_temp", action="store_true",
-                       default=False, help='Download DES template (default: False)')
-    parser.add_argument("--make_psf_temp", dest="make_psf_temp", action="store_true",
-                       default=False, help='Make PSF for template (default: False)')
-    
-    args = parser.parse_args()
-    
-    # Validate arguments
-    if args.download_DES_temp and (args.ra is None or args.dec is None):
-        parser.error("--ra and --dec are required when --download_DES_temp is used")
-    
-    if not args.download_DES_temp and args.tempimg is None:
-        parser.error("--tempimg is required when not using --download_DES_temp")
-    
-    # Get filter from image header if not provided
-    if args.filt is None:
-        from astropy.io import fits
-        filename = os.path.join(args.imgdir, args.targimg)
-        try:
-            hdul = fits.open(filename)
-            header = hdul[0].header
-            args.filt = header.get('FILTBAND', 'r')  # Default to 'r' if not found
-            hdul.close()
-        except Exception as e:
-            print(f"Warning: Could not read filter from header: {e}")
-            args.filt = 'r'  # Default fallback
-    
-    # Perform image subtraction
-    try:
-        output_filename = perform_image_subtraction(
-            science_filename=args.targimg,
-            template_filename=args.tempimg,
-            workdir=args.imgdir,
-            ra=args.ra,
-            dec=args.dec,
-            filt=args.filt,
-            sigma_cut=args.sigma_cut,
-            show=args.show,
-            download_DES_temp=args.download_DES_temp,
-            make_psf_temp=args.make_psf_temp
-        )
-        print(f"Image subtraction completed successfully!")
-        print(f"Output file: {output_filename}")
-        
-    except Exception as e:
-        print(f"Error during image subtraction: {e}")
-        raise
-
-
-if __name__ == "__main__":
-    main() 

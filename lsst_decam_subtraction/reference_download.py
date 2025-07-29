@@ -76,7 +76,7 @@ def download_decam_reference(ra, dec, fov=0.2, filt='g', saveas=None):
 
     # --- Create CCDData ---
     ccddata = CCDData(data, wcs=WCS(header), unit='adu', mask=mask_data)
-    ccddata.meta['SATURATE'] = header.get('SATURATE', np.inf)
+    ccddata.meta['SATURATE'] = header.get('SATURATE', 65535)
 
     return ccddata
 
