@@ -18,6 +18,14 @@ Dong et al. (in prep)
 
 ## Installation
 
+**Note**: On RSP, you will need to activate the LSST environment first.
+
+```bash
+# Activate LSST environment on RSP
+conda activate lsst-scipipe-10.0.0
+setup lsst_distrib
+```
+
 ### Prerequisites
 
 Most dependencies of this package has been installed on RSP. If you miss any packages, you can install them as following:
@@ -35,14 +43,6 @@ python -m pip install git+https://github.com/dguevel/PyZOGY.git
 ```
 
 ### Install SLIDE (you will need to install SLIDE on RSP)
-
-**Note**: On RSP, you will need to activate the LSST environment first.
-
-```bash
-# Activate LSST environment on RSP
-conda activate lsst-scipipe-10.0.0
-setup lsst_distrib
-```
 
 #### Option 1: Install from GitHub
 
