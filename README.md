@@ -48,7 +48,7 @@ pip install --user -e .
 #### Option 2: Install from PyPI
 
 ```bash
-pip install slide-lsst
+pip install --user slide-lsst
 ```
 
 ## Documentation
