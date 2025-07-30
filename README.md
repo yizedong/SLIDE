@@ -32,18 +32,18 @@ cd PyZOGY
 pip install --user -e .
 ```
 
-### Install lsst_decam_subtraction
+### Install slide_lsst
 
 ```bash
-# Install lsst_decam_subtraction from the local directory
-git clone https://github.com/yizedong/lsst_decam_subtraction.git
-cd lsst_decam_subtraction
+# Install slide_lsst from the local directory
+git clone https://github.com/yizedong/SLIDE.git
+cd SLIDE
 pip install --user -e .
 ```
 
 ## Documentation
 
-For detailed usage examples, see the [`example.ipynb`](example.ipynb) notebook included in the package.
+For detailed usage examples, see the [`example.ipynb`](https://github.com/yizedong/SLIDE/blob/main/example.ipynb) notebook included in the package.
 
 ## Contributing
 
