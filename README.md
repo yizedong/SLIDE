@@ -15,7 +15,7 @@ Dong et al. (in prep)
 
 ### Prerequisites
 
-Most dependencies of this package has been installed on the Rubin Science Platform. If you miss any packages, you can install them as following:
+Most dependencies of this package has been installed on RSP. If you miss any packages, you can install them as following:
 
 ```bash
 pip install --user reproject
@@ -26,16 +26,16 @@ pip install --user reproject
 This package depends on PyZOGY for image subtraction (https://github.com/dguevel/PyZOGY/tree/master):
 
 ```bash
-# Install PyZOGY from the local directory
+# Install PyZOGY on RSP
 git clone https://github.com/dguevel/PyZOGY.git
 cd PyZOGY
 pip install --user -e .
 ```
 
-### Install slide_lsst
+### Install SLIDE
 
 ```bash
-# Install slide_lsst from the local directory
+# Install SLIDE on RSP
 git clone https://github.com/yizedong/SLIDE.git
 cd SLIDE
 pip install --user -e .
