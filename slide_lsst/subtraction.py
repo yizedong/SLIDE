@@ -132,7 +132,7 @@ def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_
     logging.info('Wrote difference image to {}'.format(output))
 
 
-def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, save_intermediate=False, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True, return_output=True, protect_mem=True):
+def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True, return_output=True, protect_mem=True):
     """
     Perform image subtraction on LSST DECam data.
     
