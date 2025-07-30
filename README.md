@@ -37,6 +37,14 @@ pip install --user -e .
 
 ### Install SLIDE (you will need to install SLIDE on RSP)
 
+**Note**: On RSP, you will need to activate the LSST environment first.
+
+```bash
+# Activate LSST environment on RSP
+conda activate lsst-scipipe-10.0.0
+setup lsst_distrib
+```
+
 #### Option 1: Install from GitHub
 
 ```bash
