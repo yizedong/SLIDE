@@ -1,6 +1,9 @@
 # SLIDE: Subtracting LSST Images with DECam Exposures
 
-SLIDE performs image subtraction on LSST data using DECam templates. It is designed to run directly on the Rubin Science Platform (RSP).
+SLIDE performs image subtraction on LSST data using DECam templates. It is designed to run directly on the Rubin Science Platform (RSP). SLIDE can automatically retrieve templates from DES DR2 or DECaLS DR9. Users may also supply custom DECam templates. An example of image subtraction made by SLIDE is shown below.
+
+![Example Image Subtraction](example_data/SN_det.pdf)
+
 We thank Griffin Hosseinzadeh for providing the PyZOGY image subtraction example: https://github.com/griffin-h/image_subtraction
 
 ## Citation
@@ -32,13 +35,20 @@ cd PyZOGY
 pip install --user -e .
 ```
 
-### Install SLIDE
+### Install SLIDE (you will need to install SLIDE on RSP)
+
+#### Option 1: Install from GitHub
 
 ```bash
-# Install SLIDE on RSP
 git clone https://github.com/yizedong/SLIDE.git
 cd SLIDE
 pip install --user -e .
+```
+
+#### Option 2: Install from PyPI
+
+```bash
+pip install slide-lsst
 ```
 
 ## Documentation
