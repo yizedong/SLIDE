@@ -2,7 +2,7 @@
 
 SLIDE performs image subtraction on LSST data using DECam templates. It is designed to run directly on the Rubin Science Platform (RSP). SLIDE can automatically retrieve templates from DES DR2 or DECaLS DR9. Users may also supply custom DECam templates. An example of image subtraction made by SLIDE is shown below.
 
-![Example Image Subtraction](example_data/SN_det.pdf)
+![Example Image Subtraction](example_data/SN_det.png)
 
 We thank Griffin Hosseinzadeh for providing the PyZOGY image subtraction example: https://github.com/griffin-h/image_subtraction
 
