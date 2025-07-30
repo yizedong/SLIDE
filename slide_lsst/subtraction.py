@@ -45,7 +45,7 @@ import gc
 import psutil
 import os
 import time
-logger = logging.getLogger("lsst_decam_subtraction")  # or __name__
+logger = logging.getLogger("slide_lsst")  # or __name__
 logger.setLevel(logging.INFO)
 
 des_pixel_scale = 0.262
