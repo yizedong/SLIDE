@@ -29,10 +29,7 @@ pip install --user reproject
 This package depends on PyZOGY for image subtraction (https://github.com/dguevel/PyZOGY/tree/master):
 
 ```bash
-# Install PyZOGY on RSP
-git clone https://github.com/dguevel/PyZOGY.git
-cd PyZOGY
-pip install --user -e .
+python -m pip install git+https://github.com/dguevel/PyZOGY.git
 ```
 
 ### Install SLIDE (you will need to install SLIDE on RSP)
