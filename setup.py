@@ -52,8 +52,7 @@ setup(
         'sep>=1.1.0',
         'requests>=2.25.0',
         'pyvo>=1.3.0',
-        'astroquery>=0.4.6',
-        'Pillow>=8.0.0'
+        'astroquery>=0.4.6'
     ],
     extras_require={
         'dev': [
