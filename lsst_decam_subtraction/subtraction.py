@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sep
 import gc
+from astropy.nddata import CCDData
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs.utils import skycoord_to_pixel
@@ -32,7 +33,8 @@ from .image_processing import (
     refine_wcs_astropy,
 )
 from .reference_download import (
-    download_decam_reference,
+    download_des_reference,
+    download_decals_reference,
     gaia3cat,
     des2cat
 )
@@ -82,6 +84,12 @@ def wait_for_cgroup_memory(threshold_gb=14.0, check_interval=10):
             break
         print(f"[Memory Watch] Memory usage is {mem_gb:.2f} GB, waiting to drop below {threshold_gb:.2f} GB...")
         time.sleep(check_interval)
+
+def load_usesr_decam(data, wcs, mask, saturation=65535):
+    ccddata = CCDData(data, wcs=wcs, unit='adu', mask=mask)
+    ccddata.meta['SATURATE'] = saturation
+    return ccddata
+
 
 def cut_diff_psf(difference_psf):
     real_part = np.real(difference_psf)
@@ -209,11 +217,11 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, save_intermedi
         normalized_difference = CCDData(normalized_difference, wcs=output_wcs, unit='adu')
         #normalized_difference = np.where(combined_mask, np.nan, normalized_difference)
         normalized_difference.mask = combined_mask
-        return refdata_aligned, normalized_difference, sci_psf.data
+        return normalized_difference, sci_psf.data
     else:
         return None
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, workdir='./', show=False, download_DES_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
+def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, user_decam_data=None, workdir='./', show=False, download_DES_temp=False, download_DECaLS_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
                         refine_wcs_ref=False, mask_type = []):
     """
     Perform image subtraction on LSST DECam data.
@@ -241,7 +249,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
 
     # Get Gaia/DES catalog for PSF modeling
     if reference_catalog == 'gaia':
-        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag_limit=reference_mag1)
+        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
         des_fwhm = des_avg_fwhm[image_filter]/des_pixel_scale
     elif reference_catalog == 'des': 
         catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
@@ -284,19 +292,28 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     if download_DES_temp:
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading DES template")
-        _refdata = download_decam_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+        _refdata = download_des_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+        logger.info(f'DES template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
+        if _refdata == None:
+            logger.info(f'no DES images found; attempting to download decals templates at RA:{ra} DEC:{dec} in the {image_filter} band')
+            _refdata = download_decals_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+            logger.info(f'decals template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
         if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
-        logger.info(f'DES template downloaded for RA:{ra} DEC:{dec} for {image_filter} band')
+    elif download_DECaLS_temp:
+        if ra is None or dec is None:
+            raise ValueError("RA and DEC must be provided when downloading decals template")
+        _refdata = download_decals_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+        if save_original_temp:
+            _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
+            _refdata.write(_science_filename, overwrite=True)
+        logger.info(f'decals template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
     else:
-        if template_filename is None:
-            raise ValueError("Template filename must be provided when not downloading")
-        filename = os.path.join(workdir, template_filename)
-        _refdata = read_with_datasec(filename)
-        _ref_mask = CCDData.read('test.fits', format='fits', unit='adu', hdu=1)
-        _refdata.mask=_ref_mask
-        _refdata.meta['SATURATE'] = 65535
+        if user_decam_data is None:
+            raise ValueError("A DeCam image needs to be provided")
+        _refdata = user_decam_data
+        logger.info(f'using user-provided decam template')
 
     if refine_wcs_ref:
         # Refine WCS for reference image
@@ -327,87 +344,4 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     refdata_aligned.meta['ref_global_bkg'] = ref_global_bkg
     return scidata, refdata_aligned, sci_psf, ref_psf
 
-
-
-def local_data_load(ra=None, dec=None, science_filename=None, template_filename=None, workdir='./', filt=None, sigma_cut=5, show=False, download_DES_temp=False, 
-                     make_psf_temp=False):
-    """
-    Perform image subtraction on LSST DECam data.
-    """
-    # Read the science image
-    filename = os.path.join(workdir, science_filename)
-    _scidata = read_with_datasec(filename)
-
-    nx, ny = _scidata.shape
-    half_ra, half_dec = _scidata.wcs.all_pix2world(nx//2, ny//2, 0)
     
-    print(f"Science image center: RA={np.round(half_ra, 3)}, DEC={np.round(half_dec, 3)}")
-    
-    # Get Gaia catalog for PSF modeling
-    catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), radius_arcmin=12)
-    print(f'Gaia catalog size: {len(catalog)}')
-    catalog['raMean'], catalog['decMean'] = catalog['ra'], catalog['dec']
-    
-    # Filter stars within image bounds
-    coords = SkyCoord(catalog['raMean'], catalog['decMean'], unit='deg')
-    x, y = skycoord_to_pixel(coords, _scidata.wcs, origin=0)
-    margin = 25 // 2
-    
-    mask = (
-        (x > margin) & (x < nx - margin) &
-        (y > margin) & (y < ny - margin)
-    )
-    catalog = catalog[mask]
-
-    # Create PSF for science image
-    _, sci_stars = make_psf(_scidata, catalog, show=show, boxsize=25)
-    scidata = _scidata.copy()
-    refine_wcs(scidata.wcs, sci_stars, catalog)
-    print(f"Using {len(catalog)} stars for WCS refinement")
-
-    # Read science image PSF
-    filename = os.path.join(workdir, science_filename.replace('.fits', '.psf.fits'))
-    sci_psf = read_with_datasec(filename)
-
-    # Get reference image
-    if download_DES_temp:
-        if ra is None or dec is None:
-            raise ValueError("RA and DEC must be provided when downloading DES template")
-        _refdatas = download_decam_reference(ra=ra, dec=dec, fov=0.5, filt=filt)
-        print(f'DES template downloaded for RA:{ra} DEC:{dec}')
-    else:
-        if template_filename is None:
-            raise ValueError("Template filename must be provided when not downloading")
-        filename = os.path.join(workdir, template_filename)
-        _refdatas = read_with_datasec(filename)
-    
-    # Get catalog for reference image
-    if ra is not None and dec is not None:
-        half_ra, half_dec = ra, dec
-    else:
-        nx, ny = _refdatas.shape
-        half_ra, half_dec = _refdatas.wcs.all_pix2world(nx//2, ny//2, 0)
-    
-    catalog = gaia3cat(ra=half_ra, dec=half_dec, radius_arcmin=10)
-    catalog['raMean'], catalog['decMean'] = catalog['ra'], catalog['dec']
-    
-    # Create PSF for reference image
-    _, ref_stars = make_psf(_refdatas, catalog, show=show)
-    refdatas = _refdatas.copy()
-    
-    
-    
-    refine_wcs(refdatas.wcs, ref_stars, catalog)
-
-    # Get reference PSF
-    if make_psf_temp:
-        print(f'Making PSF for {template_filename}')
-        ref_psf, _ = make_psf(refdatas, catalog, show=False)
-    else:
-        filename = os.path.join(workdir, template_filename.replace('.fits', '.psf.fits'))
-        print(f'Reading PSF for {template_filename}')
-        ref_psf = read_with_datasec(filename)
-    
-    return scidata, refdata, sci_psf, ref_psf
-
-
