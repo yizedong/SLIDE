@@ -2,6 +2,14 @@
 
 SLIDE performs image subtraction on LSST data using DECam templates. It is designed to run directly on the Rubin Science Platform and is based on the PyZOGY tutorial by Griffin Hosseinzadeh: https://github.com/griffin-h/image_subtraction
 
+## Citation
+
+If you use this package in your research, please cite:
+
+```
+Dong et al. (in prep)
+```
+
 ## Installation
 
 ### Prerequisites
@@ -43,11 +51,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Citation
-
-If you use this package in your research, please cite:
-
-```
-Dong et al. (in prep)
-```
