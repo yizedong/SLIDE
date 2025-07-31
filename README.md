@@ -12,9 +12,7 @@ We thank Griffin Hosseinzadeh for providing the PyZOGY image subtraction example
 
 If you use this package in your research, please cite:
 
-```
 Dong et al. (2025), "Enabling Early Transient Discovery in LSST via Difference Imaging with DECam", [arXiv:2507.22156](https://arxiv.org/abs/2507.22156)
-```
 
 ## Installation
 
