@@ -81,7 +81,7 @@ def download_des_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     # --- Create CCDData ---
     ccddata = CCDData(data, wcs=WCS(header), unit='adu', mask=mask_data)
     ccddata.meta['SATURATE'] = header.get('SATURATE', 65535)
-
+    ccddata.meta['ref_zp'] = 30 #mag ZP
     return ccddata
 
 
@@ -139,7 +139,7 @@ def download_decals_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     # --- Create CCDData ---
     ccddata = CCDData(data, wcs=WCS(header), unit='adu', mask=mask_data)
     ccddata.meta['SATURATE'] = header.get('SATURATE', 65535) #not sure how to get the correct saturation level for ld dr9
-
+    ccddata.meta['ref_zp'] = header.get('MAGZERO') #mag ZP
     return ccddata
 
 

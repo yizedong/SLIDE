@@ -102,6 +102,7 @@ def lsst_visit_to_ccddata(visit_image, mask_type = ["BAD", "SAT", "INTRP", "CR",
     ccddata = CCDData(data, wcs=wcs, unit='adu')
     ccddata.mask = mask
     ccddata.meta['SATURATE'] = SATURATE
+    ccddata.meta['sci_zp'] = 2.5 * np.log10(3631e9)
     if saveas is not None:
         visit_image.writeFits(saveas)
     return ccddata
@@ -128,31 +129,36 @@ def lsst_visit_to_psf(visit_image, ra, dec):
     return ccddata
 
 
-def lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=(2000, 2000), sample_number=20):
+def lsst_visit_to_psf_median(visit_image, ra, dec, cutout=True, cutout_size=4000, sample_number=20):
+    if not cutout:
+        cutout_size = (4000, 4000)
     if isinstance(cutout_size, (int, float)):
         cutout_size = (int(cutout_size), int(cutout_size))
     else:
         cutout_size = (int(cutout_size[0]), int(cutout_size[1]))
+    
+        
 
     data = visit_image.image.array
     ny, nx = data.shape
 
     # Get WCS and center in pixel coordinates
-    header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
-    wcs = WCS(header)
-    xcen, ycen = astropy_world_to_pixel(ra, dec, wcs)
+    #header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
+    #wcs = WCS(header)
+    #xcen, ycen = astropy_world_to_pixel(ra, dec, wcs)
+    xcen, ycen = lsst_world_to_pixel(ra, dec, visit_image)
 
     # Shift center inward if too close to edge
-    half_x, half_y = cutout_size[0] // 2, cutout_size[1] // 2
-    xcen = np.clip(xcen, half_x, nx - half_x)
-    ycen = np.clip(ycen, half_y, ny - half_y)
+    #half_x, half_y = cutout_size[0] // 2, cutout_size[1] // 2
+    #xcen = np.clip(xcen, half_x, nx - half_x)
+    #ycen = np.clip(ycen, half_y, ny - half_y)
 
     # Sample PSFs
     psf = visit_image.getPsf()
     psf_stars = []
 
-    for dx in np.linspace(-cutout_size[0] / 2, cutout_size[0] / 2, sample_number):
-        for dy in np.linspace(-cutout_size[1] / 2, cutout_size[1] / 2, sample_number):
+    for dx in np.linspace(-cutout_size[0] / 2 + 13, cutout_size[0] / 2 - 13, sample_number):
+        for dy in np.linspace(-cutout_size[1] / 2 + 13, cutout_size[1] / 2 - 13, sample_number):
             x_sample, y_sample = xcen + dx, ycen + dy
             xy = lsst.geom.Point2D(x_sample, y_sample)
             psf_image = psf.computeImage(xy).getArray()
@@ -165,7 +171,7 @@ def lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=(2000, 2000), sam
     stacked = np.median(np.stack(psf_stars, axis=0), axis=0)
     psf_final = stacked / np.sum(stacked)
 
-    ccddata = CCDData(psf_final, unit='adu')
+    ccddata = CCDData(psf_final, unit='')
 
     return ccddata
         
@@ -274,6 +280,7 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000), mask_type = ["
     ccddata = CCDData(cutout.data, wcs=cutout.wcs, unit='adu')
     ccddata.mask = cutout_mask.data
     ccddata.meta['SATURATE'] = SATURATE
+    ccddata.meta['sci_zp'] = 2.5 * np.log10(3631e9)
     return ccddata
 
 def lsst_cutout_to_ccddata(cutout, saveas=None):
@@ -295,14 +302,20 @@ def forced_phot(ra, dec, image, wcs, psf_data):
     psfphot = PSFPhotometry(psf_model, fit_shape,
                             aperture_radius=7,
                             localbkg_estimator=None)
-    phot = psfphot(image.data, init_params=init_params)
+    try:
+        phot = psfphot(image.data, init_params=init_params, mask=image.mask)
+    except ValueError as e:
+        if "completely masked" in str(e):
+            return np.nan, np.nan, np.nan, np.nan, np.nan
+        else:
+            raise  # re-raise unexpected errors
     if phot[0]['flux_fit'] / phot[0]['flux_err'] <= 3 or phot[0]['flux_err'] == 0:
         psf_model.x_0.fixed = True
         psf_model.y_0.fixed = True
         psfphot = PSFPhotometry(psf_model, fit_shape,
                             aperture_radius=7,
                             localbkg_estimator=None)
-        phot = psfphot(image.data, init_params=init_params)
+        phot = psfphot(image.data, init_params=init_params, mask = image.mask)
     flux_njy = phot[0]['flux_fit']
     flux_err = phot[0]['flux_err']
     mag = -2.5 * np.log10(flux_njy / 3631e9)

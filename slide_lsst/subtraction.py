@@ -24,6 +24,7 @@ from PyZOGY.subtract import (
     save_difference_psf_to_file
 )
 from PyZOGY.image_class import ImageClass
+from .slide_image_class import FASTImageClass
 
 from .image_processing import (
     read_with_datasec, 
@@ -85,9 +86,10 @@ def wait_for_cgroup_memory(threshold_gb=14.0, check_interval=10):
         print(f"[Memory Watch] Memory usage is {mem_gb:.2f} GB, waiting to drop below {threshold_gb:.2f} GB...")
         time.sleep(check_interval)
 
-def load_usesr_decam(data, wcs, mask, saturation=65535):
+def load_usesr_decam(data, wcs, mask, ZP, saturation=65535):
     ccddata = CCDData(data, wcs=wcs, unit='adu', mask=mask)
     ccddata.meta['SATURATE'] = saturation
+    ccddata.meta['ref_zp'] = ZP
     return ccddata
 
 
@@ -132,7 +134,7 @@ def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_
     logging.info('Wrote difference image to {}'.format(output))
 
 
-def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True, return_output=True, protect_mem=True):
+def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, normalize='science', fast_mode=False, show=False, workdir='./', science_filename=None, save_diff=False, sigma_cut=5, max_iterations=3, gain_ratio = np.inf, percent=99, use_pixels=False, size_cut=True, return_output=True, protect_mem=True):
     """
     Perform image subtraction on LSST DECam data.
     
@@ -161,13 +163,13 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, show=False, wo
         
     Returns
     -------
-    str
-        Path to output difference image
     """
 
     if save_diff and science_filename is None:
         science_filename = scidata.meta['filename']
-
+    if normalize not in ['science', 'reference', 'i', 't']:
+        raise ValueError(f"Invalid normalization option: '{normalize}'. Must be one of ['science', 'reference', 'i', 't'].")
+        
     refdata_aligned = refdata
     
     # Calculate background
@@ -180,16 +182,26 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, show=False, wo
     
     # Perform image subtraction
     logger.info('loading the science image')
-    science = ImageClass(scidata, sci_psf.data, scidata.mask, saturation=scidata.meta['SATURATE'])
+    if fast_mode:
+        science = FASTImageClass(scidata, sci_psf.data, scidata.mask, saturation=scidata.meta['SATURATE'])
+    else:
+        science = ImageClass(scidata, sci_psf.data, scidata.mask, saturation=scidata.meta['SATURATE'])
     science = np.nan_to_num(science, nan=sci_global_bkg) #visit images are already bkg subtracted
 
 
     refdata_aligned.mask[np.isnan(refdata_aligned.data)] = True
     logger.info('loading the template image')
-    reference = ImageClass(refdata_aligned, ref_psf.data, refdata_aligned.mask, saturation=refdata_aligned.meta['SATURATE'])
+    if fast_mode:
+        reference = FASTImageClass(refdata_aligned, ref_psf.data, refdata_aligned.mask, saturation=refdata_aligned.meta['SATURATE'])
+    else:
+        reference = ImageClass(refdata_aligned, ref_psf.data, refdata_aligned.mask, saturation=refdata_aligned.meta['SATURATE'])
     reference = np.nan_to_num(reference, nan=refdata_aligned.meta['ref_global_bkg'])
     combined_mask = reference.mask | scidata.mask
     output_wcs = scidata.wcs  # Save before deleting
+    ref_zp = refdata_aligned.meta['ref_zp']
+    sci_zp = scidata.meta['sci_zp']
+    if fast_mode:
+        gain_ratio = 10 ** (0.4*sci_zp) / 10 ** (0.4*ref_zp)
     if not return_output:
         del scidata, refdata_aligned
         gc.collect()
@@ -200,7 +212,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, show=False, wo
         wait_for_cgroup_memory(threshold_gb=15, check_interval=15)
     difference = calculate_difference_image(science, reference, show=show, max_iterations=max_iterations, sigma_cut=sigma_cut, gain_ratio=gain_ratio, percent=percent, use_pixels=use_pixels, size_cut=size_cut)
     difference_zero_point = calculate_difference_image_zero_point(science, reference)
-    normalized_difference = normalize_difference_image(difference, difference_zero_point, science, reference, 'i')
+    normalized_difference = normalize_difference_image(difference, difference_zero_point, science, reference, normalize)
     del science, reference, difference
     gc.collect()
     logger.info(f"Image subtraction completed successfully!")
@@ -217,17 +229,22 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, show=False, wo
         normalized_difference = CCDData(normalized_difference, wcs=output_wcs, unit='adu')
         #normalized_difference = np.where(combined_mask, np.nan, normalized_difference)
         normalized_difference.mask = combined_mask
+        normalized_difference.meta['normalize'] = normalize
+        normalized_difference.meta['ref_zp'] = ref_zp
+        normalized_difference.meta['sci_zp'] = sci_zp
         return normalized_difference, sci_psf.data
     else:
         return None
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None, template_filename=None, user_decam_data=None, workdir='./', show=False, download_DES_temp=False, download_DECaLS_temp=False, cutout=False, cutout_size=1000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
+def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'target', science_filename = None, template_filename=None, user_decam_data=None, workdir='./', show=False, download_DES_temp=False, download_DECaLS_temp=False, cutout=False, cutout_size=4000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
                         refine_wcs_ref=False, mask_type = []):
     """
-    Perform image subtraction on LSST DECam data.
+    Perform image subtraction on LSST data using DeCAM templates.
     """
     if len(mask_type) == 0:
         mask_type = ["BAD", "SAT", "INTRP", "CR", "EDGE", "SUSPECT", "NO_DATA", "SENSOR_EDGE", "CLIPPED", "CROSSTALK", "UNMASKEDNAN", "STREAK"]
+    if cutout_size > 4000:
+        cutout = False
     image_filter = visit_image.filter.bandLabel
 
     if science_filename is None:
@@ -241,18 +258,22 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
         scidata = safe_cutout2d(visit_image, ra, dec, cutout_size=cutout_size, mask_type = mask_type)
     else:
         scidata = lsst_visit_to_ccddata(visit_image, mask_type = mask_type)
-        ra, dec = lsst_pixel_to_world(2036.0, 2000.0, visit_image)
+        ra, dec = lsst_pixel_to_world(2036.0, 2000.0, visit_image) # the center of a full CCD image
     logger.info(f'science image saturation level: {scidata.meta['SATURATE']}')
 
     nx, ny = scidata.shape
     half_ra, half_dec = astropy_pixel_to_world(nx//2, ny//2, scidata.wcs)
-
-    # Get Gaia/DES catalog for PSF modeling
+    
+    if reference_center == 'center':
+        reference_ra, reference_dec = half_ra, half_dec
+    elif reference_center == 'target':
+        reference_ra, reference_dec = ra, dec
+        
     if reference_catalog == 'gaia':
-        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
+        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=12, mag1=reference_mag1, mag2=reference_mag2)
         des_fwhm = des_avg_fwhm[image_filter]/des_pixel_scale
     elif reference_catalog == 'des': 
-        catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=11, mag1=reference_mag1, mag2=reference_mag2)
+        catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=12, mag1=reference_mag1, mag2=reference_mag2)
         des_fwhm = np.median(catalog[f'{image_filter}FWHM'])
     logger.info(f'catalog size: {len(catalog)}')
     catalog['raMean'], catalog['decMean'] = catalog['ra'], catalog['dec']
@@ -272,12 +293,12 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     if make_sci_psf:
         if len(catalog) < 5:
             logger.info('Too few stars, getting PSF from the visit_image')
-            sci_psf = lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=cutout_size)
+            sci_psf = lsst_visit_to_psf_median(visit_image, half_ra, half_dec, cutout=cutout, cutout_size=cutout_size)
             psf_flag=1
         else:
             sci_psf, _ = make_psf(scidata, catalog, show=show)
     elif get_median_sci_psf:
-        sci_psf = lsst_visit_to_psf_median(visit_image, ra, dec, cutout_size=cutout_size)
+        sci_psf = lsst_visit_to_psf_median(visit_image, half_ra, half_dec, cutout=cutout, cutout_size=cutout_size)
         psf_flag = 1
     else:
         sci_psf = lsst_visit_to_psf(visit_image, ra, dec)
@@ -289,14 +310,15 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
         ax1.set_title('Science PSF')
 
     # Get reference image
+    # Get Gaia/DES catalog for PSF modeling
     if download_DES_temp:
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading DES template")
-        _refdata = download_des_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+        _refdata = download_des_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
         logger.info(f'DES template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
         if _refdata == None:
             logger.info(f'no DES images found; attempting to download decals templates at RA:{ra} DEC:{dec} in the {image_filter} band')
-            _refdata = download_decals_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+            _refdata = download_decals_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
             logger.info(f'decals template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
         if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
@@ -304,7 +326,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     elif download_DECaLS_temp:
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading decals template")
-        _refdata = download_decals_reference(ra=half_ra, dec=half_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+        _refdata = download_decals_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
         if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
@@ -332,6 +354,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, science_filename = None
     logger.info('align the template with the science image')
     refdata_aligned = assemble_reference([_refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg)
     refdata_aligned.meta['SATURATE'] = _refdata.meta['SATURATE']
+    refdata_aligned.meta['ref_zp'] = _refdata.meta['ref_zp']
     if save_intermediate:
         _template_filename = os.path.join(workdir, science_filename.replace('.fits', '.temp.fits'))
         refdata_aligned.write(_template_filename, overwrite=True)
