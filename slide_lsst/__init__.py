@@ -5,7 +5,7 @@ This package provides tools for performing image subtraction on LSST images usin
 including PSF modeling, reference image downloading, and image subtraction.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Yize Dong"
 
 from .lsst_utils import query_lsst_visits, lsst_visit_to_ccddata, lsst_visit_to_psf
