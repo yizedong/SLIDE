@@ -1,5 +1,7 @@
 # SLIDE: Subtracting LSST Images with DECam Exposures
 
+> **NOTE:** Major changes have been implemented since August 12, 2025. A new option `fast_mode` has been added to the `perform_image_subtraction` function, which makes image subtraction much faster and more reliable. Please git pull to get updates.
+
 > **WARNING: SLIDE is designed for use on the Rubin Science Platform (RSP). It will not work on local installations!**
 
 SLIDE performs image subtraction on LSST data using DECam templates. It is designed to run directly on the Rubin Science Platform (RSP). SLIDE can automatically retrieve templates from DES DR2 or DECaLS DR9. Users may also supply custom DECam templates. An example of image subtraction made by SLIDE is shown below.
