@@ -86,7 +86,7 @@ def wait_for_cgroup_memory(threshold_gb=14.0, check_interval=10):
         print(f"[Memory Watch] Memory usage is {mem_gb:.2f} GB, waiting to drop below {threshold_gb:.2f} GB...")
         time.sleep(check_interval)
 
-def load_usesr_decam(data, wcs, mask, ZP, saturation=65535):
+def load_usesr_decam(data, wcs, mask, ZP=-np.inf, saturation=65535):
     ccddata = CCDData(data, wcs=wcs, unit='adu', mask=mask)
     ccddata.meta['SATURATE'] = saturation
     ccddata.meta['ref_zp'] = ZP
