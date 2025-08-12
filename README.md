@@ -1,12 +1,6 @@
 # SLIDE: Subtracting LSST Images with DECam Exposures
 
-> **NOTE (August 12, 2025):** Major updates landed. A new option `fast_mode` was added to `perform_image_subtraction`, making subtraction faster and more reliable.  
-> 
-> Update your copy and see the example notebook:
-> 
-> - From git: `git pull`
-> - From PyPI: `pip install --upgrade --user slide-lsst`
-> - Example: [`example.ipynb`](https://github.com/yizedong/SLIDE/blob/main/example.ipynb)
+> **NOTE:** Major changes have been implemented since August 12, 2025. A new option `fast_mode` has been added to the `perform_image_subtraction` function, which makes image subtraction much faster and more reliable. Please run `git pull` or `pip install --upgrade --user slide-lsst` to update and see [`example.ipynb`](https://github.com/yizedong/SLIDE/blob/main/example.ipynb) for an example.
 
 > **WARNING: SLIDE is designed for use on the Rubin Science Platform (RSP). It will not work on local installations!**
 
