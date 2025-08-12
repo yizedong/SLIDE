@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "slide_lsst"
-version = "0.1.1"
+version = "0.2.0"
 description = "Image subtraction package for LSST using DECam templates"
 readme = "README.md"
 license = {text = "MIT"}
