@@ -4,7 +4,6 @@ Image processing utilities.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from reproject import reproject_interp, reproject_adaptive
 from astropy.io import fits
 from astropy.nddata import CCDData, NDData
 from astropy.wcs import WCS, _wcs
@@ -294,51 +293,3 @@ def refine_wcs_astropy(image, wcs, catalog, fwhm=5.0, projection='TAN', fit_dist
     return new_wcs, catalog
     
 
-def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, order='bicubic'):
-    """
-    Reproject and stack reference images to match science image.
-    
-    Parameters
-    ----------
-    refdatas : list
-        List of reference CCDData objects
-    wcs : WCS
-        Target WCS
-    shape : tuple
-        Target image shape
-    ref_global_bkg : float, optional
-        Background value for masked pixels (default: 0)
-    order : str, optional
-        Interpolation order (default: 'bicubic')
-        
-    Returns
-    -------
-    CCDData
-        Assembled reference image
-    """
-    refdatas_reprojected = []
-    mask_stack = []
-    refdata_foot = np.zeros(shape, float)
-    for data in refdatas:
-        #reprojected, foot = reproject_interp((data.data, data.wcs), wcs, shape, order=order)
-        reprojected, foot = reproject_adaptive((data.data, data.wcs), wcs, shape, conserve_flux=True)
-        
-        refdatas_reprojected.append(reprojected)
-        refdata_foot += foot
-
-        if data.mask is not None:
-            # Use nearest-neighbor interpolation for boolean mask
-            mask_reproj, _ = reproject_interp((data.mask.astype(float), data.wcs), wcs, shape)
-            mask_stack.append(mask_reproj > 0.5)
-    # Combine masks if available
-    if mask_stack:
-        combined_mask = np.any(mask_stack, axis=0)
-    else:
-        combined_mask = np.zeros(shape, dtype=bool)
-    refdata_reproj = np.nanmedian(refdatas_reprojected, axis=0)
-    if np.all(np.isnan(refdata_reproj)):
-        raise ValueError("All reprojected reference data is NaN.")
-    refdata_reproj[np.isnan(refdata_reproj)] = ref_global_bkg
-    final_mask = (refdata_foot == 0.) | combined_mask
-    refdata = CCDData(refdata_reproj, wcs=wcs, mask=final_mask, unit='adu')
-    return refdata 

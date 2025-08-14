@@ -30,7 +30,7 @@ from .image_processing import (
     read_with_datasec, 
     make_psf, 
     refine_wcs, 
-    assemble_reference,
+    #assemble_reference,
     refine_wcs_astropy,
 )
 from .reference_download import (
@@ -46,6 +46,8 @@ import gc
 import psutil
 import os
 import time
+from reproject import reproject_interp, reproject_adaptive
+
 logger = logging.getLogger("slide_lsst")  # or __name__
 logger.setLevel(logging.INFO)
 
@@ -86,7 +88,7 @@ def wait_for_cgroup_memory(threshold_gb=14.0, check_interval=10):
         print(f"[Memory Watch] Memory usage is {mem_gb:.2f} GB, waiting to drop below {threshold_gb:.2f} GB...")
         time.sleep(check_interval)
 
-def load_usesr_decam(data, wcs, mask, ZP=-np.inf, saturation=65535):
+def load_user_decam(data, wcs, mask, ZP=-np.inf, saturation=65535):
     ccddata = CCDData(data, wcs=wcs, unit='adu', mask=mask)
     ccddata.meta['SATURATE'] = saturation
     ccddata.meta['ref_zp'] = ZP
@@ -102,6 +104,56 @@ def cut_diff_psf(difference_psf):
     #center = (nx // 2, ny // 2)
     #cutout = Cutout2D(centered_psf, position=center, size=(25, 25))
     return centered_psf#cutout.data
+
+def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, parallel=True):
+    """
+    Reproject and stack reference images to match science image.
+    
+    Parameters
+    ----------
+    refdatas : list
+        List of reference CCDData objects
+    wcs : WCS
+        Target WCS
+    shape : tuple
+        Target image shape
+    ref_global_bkg : float, optional
+        Background value for masked pixels (default: 0)
+    order : str, optional
+        Interpolation order (default: 'bicubic')
+        
+    Returns
+    -------
+    CCDData
+        Assembled reference image
+    """
+    refdatas_reprojected = []
+    mask_stack = []
+    refdata_foot = np.zeros(shape, float)
+    for data in refdatas:
+        #reprojected, foot = reproject_interp((data.data, data.wcs), wcs, shape, order=order)
+        reprojected, foot = reproject_adaptive((data.data, data.wcs), wcs, shape, conserve_flux=True, parallel=parallel)
+        
+        refdatas_reprojected.append(reprojected)
+        refdata_foot += foot
+
+        if data.mask is not None:
+            # Use nearest-neighbor interpolation for boolean mask
+            mask_reproj, _ = reproject_interp((data.mask.astype(float), data.wcs), wcs, shape)
+            mask_stack.append(mask_reproj > 0.5)
+    # Combine masks if available
+    if mask_stack:
+        combined_mask = np.any(mask_stack, axis=0)
+    else:
+        combined_mask = np.zeros(shape, dtype=bool)
+    refdata_reproj = np.nanmedian(refdatas_reprojected, axis=0)
+    if np.all(np.isnan(refdata_reproj)):
+        raise ValueError("All reprojected reference data is NaN.")
+    refdata_reproj[np.isnan(refdata_reproj)] = ref_global_bkg
+    final_mask = (refdata_foot == 0.) | combined_mask
+    refdata = CCDData(refdata_reproj, wcs=wcs, mask=final_mask, unit='adu')
+    return refdata 
+
 
 def save_difference_image_lsst(difference_image, sci_header_primary, sci_header_wcs, normalization, output):
     """
@@ -237,7 +289,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, normalize='sci
         return None
 
 def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'target', science_filename = None, template_filename=None, user_decam_data=None, workdir='./', show=False, download_DES_temp=False, download_DECaLS_temp=False, cutout=False, cutout_size=4000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
-                        refine_wcs_ref=False, mask_type = []):
+                        refine_wcs_ref=False, mask_type = [], reprojection_parallel=True):
     """
     Perform image subtraction on LSST data using DeCAM templates.
     """
@@ -270,12 +322,17 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'tar
         reference_ra, reference_dec = ra, dec
         
     if reference_catalog == 'gaia':
-        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=12, mag1=reference_mag1, mag2=reference_mag2)
+        catalog = gaia3cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=max(nx, ny)/2*0.2/60*1.42, mag1=reference_mag1, mag2=reference_mag2)
         des_fwhm = des_avg_fwhm[image_filter]/des_pixel_scale
     elif reference_catalog == 'des': 
-        catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=12, mag1=reference_mag1, mag2=reference_mag2)
+        catalog = des2cat(ra=np.round(half_ra, 3), dec=np.round(half_dec, 3), ccddata=scidata, band=image_filter, radius_arcmin=max(nx, ny)/2*0.2/60*1.42, mag1=reference_mag1, mag2=reference_mag2)
         des_fwhm = np.median(catalog[f'{image_filter}FWHM'])
-    logger.info(f'catalog size: {len(catalog)}')
+    if len(catalog) <= 30:
+        logger.info(f'catalog size: {len(catalog)}')
+    else:
+        logger.info(f'catalog size: {len(catalog)}, will select 30 stars')
+        selected_idx = np.random.choice(len(catalog), 30, replace=False)
+        catalog = catalog[selected_idx]
     catalog['raMean'], catalog['decMean'] = catalog['ra'], catalog['dec']
 
     if refine_wcs_sci:
@@ -352,7 +409,7 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'tar
 
     # Assemble reference image
     logger.info('align the template with the science image')
-    refdata_aligned = assemble_reference([_refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg)
+    refdata_aligned = assemble_reference([_refdata], scidata.wcs, scidata.shape, ref_global_bkg=ref_global_bkg, parallel=reprojection_parallel)
     refdata_aligned.meta['SATURATE'] = _refdata.meta['SATURATE']
     refdata_aligned.meta['ref_zp'] = _refdata.meta['ref_zp']
     if save_intermediate:

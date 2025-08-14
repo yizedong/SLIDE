@@ -14,14 +14,14 @@ from .image_processing import (
     get_ccd_bbox,
     make_psf,
     refine_wcs,
-    assemble_reference
+    #assemble_reference
 )
 from .reference_download import (
     download_des_reference,
     download_decals_reference,
     gaia3cat,
 )
-from .subtraction import perform_image_subtraction, lsst_decam_data_load, load_usesr_decam
+from .subtraction import perform_image_subtraction, lsst_decam_data_load, load_user_decam
 
 __all__ = [
     'gaia3cat',
@@ -37,5 +37,5 @@ __all__ = [
     'lsst_visit_to_psf',
     'perform_image_subtraction',
     'lsst_decam_data_load',
-    'load_usesr_decam'
+    'load_user_decam'
 ] 
