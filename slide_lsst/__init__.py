@@ -19,6 +19,7 @@ from .image_processing import (
 from .reference_download import (
     download_des_reference,
     download_decals_reference,
+    download_decals_dr10_reference,
     gaia3cat,
 )
 from .subtraction import perform_image_subtraction, lsst_decam_data_load, load_user_decam
@@ -33,6 +34,7 @@ __all__ = [
     'assemble_reference',
     'download_des_reference',
     'download_decals_reference',
+    'download_decals_dr10_reference',
     'lsst_visit_to_ccddata',
     'lsst_visit_to_psf',
     'perform_image_subtraction',

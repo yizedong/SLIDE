@@ -36,6 +36,7 @@ from .image_processing import (
 from .reference_download import (
     download_des_reference,
     download_decals_reference,
+    download_decals_dr10_reference,
     gaia3cat,
     des2cat
 )
@@ -288,7 +289,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, normalize='sci
     else:
         return None
 
-def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'target', science_filename = None, template_filename=None, user_decam_data=None, workdir='./', show=False, download_DES_temp=False, download_DECaLS_temp=False, cutout=False, cutout_size=4000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
+def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'target', science_filename = None, template_filename=None, user_decam_data=None, workdir='./', show=False, download_DES_temp=False, download_DECaLS_DR9_temp=False, download_DECaLS_DR10_temp=False, cutout=False, cutout_size=4000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
                         refine_wcs_ref=False, mask_type = [], reprojection_parallel=True):
     """
     Perform image subtraction on LSST data using DeCAM templates.
@@ -376,18 +377,26 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'tar
         if _refdata == None:
             logger.info(f'no DES images found; attempting to download decals templates at RA:{ra} DEC:{dec} in the {image_filter} band')
             _refdata = download_decals_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
-            logger.info(f'decals template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
+            logger.info(f'decals DR9 template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
         if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
-    elif download_DECaLS_temp:
+    elif download_DECaLS_DR9_temp:
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading decals template")
         _refdata = download_decals_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
         if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
-        logger.info(f'decals template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
+        logger.info(f'decals DR9 template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
+    elif download_DECaLS_DR10_temp:
+        if ra is None or dec is None:
+            raise ValueError("RA and DEC must be provided when downloading DECaLS DR10 template")
+        _refdata = download_decals_dr10_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+        if save_original_temp:
+            _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
+            _refdata.write(_science_filename, overwrite=True)
+        logger.info(f'DECaLS DR10 template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
     else:
         if user_decam_data is None:
             raise ValueError("A DeCam image needs to be provided")

@@ -2,10 +2,11 @@
 Reference image downloading utilities for LSST DECam image subtraction.
 """
 
+import gzip
 import numpy as np
 import requests
 from astropy.table import Table
-from astropy.nddata import CCDData
+from astropy.nddata import CCDData, Cutout2D
 from astropy.wcs import WCS
 from astropy.io import fits
 from io import BytesIO
@@ -18,6 +19,35 @@ from astroquery.vizier import Vizier
 from astropy import units as u
 from .lsst_utils import astropy_world_to_pixel
 from astropy.utils.exceptions import AstropyUserWarning
+
+_NERSC_BASE = "https://portal.nersc.gov/cfs/cosmo/data/legacysurvey/dr10/south/coadd"
+_BRICKS_URL = "https://portal.nersc.gov/cfs/cosmo/data/legacysurvey/dr10/south/survey-bricks-dr10-south.fits.gz"
+_bricks_cache = None
+
+
+def _load_dr10_bricks():
+    global _bricks_cache
+    if _bricks_cache is None:
+        response = requests.get(_BRICKS_URL, timeout=120)
+        response.raise_for_status()
+        with fits.open(BytesIO(gzip.decompress(response.content))) as hdul:
+            _bricks_cache = hdul[1].data
+    return _bricks_cache
+
+
+def _find_dr10_brickname(ra, dec):
+    bricks = _load_dr10_bricks()
+    mask = (
+        (bricks['RA1'] <= ra)  & (ra  < bricks['RA2']) &
+        (bricks['DEC1'] <= dec) & (dec < bricks['DEC2'])
+    )
+    hits = bricks[mask]
+    if len(hits) == 0:
+        raise ValueError(
+            f'RA={ra}, Dec={dec} not found in any DR10-South brick. '
+            'Check that the position is within the DECam footprint (Dec < 32.375°).'
+        )
+    return hits['BRICKNAME'][0].strip()
 
 
 def download_des_reference(ra, dec, fov=0.2, filt='g', saveas=None):
@@ -140,6 +170,64 @@ def download_decals_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     ccddata = CCDData(data, wcs=WCS(header), unit='adu', mask=mask_data)
     ccddata.meta['SATURATE'] = header.get('SATURATE', 65535) #not sure how to get the correct saturation level for ld dr9
     ccddata.meta['ref_zp'] = header.get('MAGZERO') #mag ZP
+    return ccddata
+
+
+def download_decals_dr10_reference(ra, dec, fov=0.2, filt='g', saveas=None):
+    """
+    Download DECaLS DR10 coadded reference image directly from NERSC brick files.
+
+    Downloads the full brick from NERSC and cuts out a fov-sized region centred
+    on (ra, dec). Unlike DR9, DR10 includes i-band coverage.
+
+    Parameters
+    ----------
+    ra, dec : float
+        Coordinates in degrees.
+    fov : float, optional
+        Field of view in degrees (default: 0.2).
+    filt : str, optional
+        Filter band: 'g', 'r', 'i', or 'z' (default: 'g').
+        Note: 'i'-band is new in DR10 and not available in DR9.
+    saveas : str, optional
+        Path to save combined FITS file (image + mask in HDUs).
+
+    Returns
+    -------
+    CCDData
+        Image data with mask and WCS.
+    """
+    brickname = _find_dr10_brickname(ra, dec)
+    prefix = brickname[:3]
+    fname = f"legacysurvey-{brickname}-image-{filt}.fits.fz"
+    url = f"{_NERSC_BASE}/{prefix}/{brickname}/{fname}"
+
+    response = requests.get(url, timeout=120)
+    response.raise_for_status()
+
+    with fits.open(BytesIO(response.content)) as hdul:
+        data = hdul[1].data.astype(np.float32)
+        header = hdul[1].header
+
+    wcs = WCS(header)
+    position = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
+    cutout = Cutout2D(data, position, u.Quantity((fov, fov), u.deg),
+                      wcs=wcs, mode='partial', fill_value=np.nan)
+
+    data = cutout.data
+    wcs = cutout.wcs
+    mask_data = (data == 0) | ~np.isfinite(data)
+
+    # --- Save combined FITS file if requested ---
+    if saveas:
+        hdu_image = fits.PrimaryHDU(data=data, header=wcs.to_header())
+        hdu_mask = fits.ImageHDU(data=mask_data.astype(np.uint8), name='MASK')
+        fits.HDUList([hdu_image, hdu_mask]).writeto(saveas, overwrite=True)
+
+    # --- Create CCDData ---
+    ccddata = CCDData(data, wcs=wcs, unit='adu', mask=mask_data)
+    ccddata.meta['SATURATE'] = header.get('SATURATE', 65535)
+    ccddata.meta['ref_zp'] = header.get('MAGZERO', 22.5)
     return ccddata
 
 
