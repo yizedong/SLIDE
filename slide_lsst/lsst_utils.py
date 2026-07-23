@@ -296,7 +296,7 @@ def forced_phot(ra, dec, image, wcs, psf_data):
     _x, _y = astropy_world_to_pixel(ra, dec, wcs)
     init_params['x'] = [_x]
     init_params['y'] = [_y]
-    fit_shape = (5,5)
+    fit_shape = (9,9)
     #bkgstat = MMMBackground()
     #localbkg_estimator = LocalBackground(5, 10, bkgstat)
     psfphot = PSFPhotometry(psf_model, fit_shape,

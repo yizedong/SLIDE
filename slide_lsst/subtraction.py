@@ -96,15 +96,13 @@ def load_user_decam(data, wcs, mask, ZP=-np.inf, saturation=65535):
     return ccddata
 
 
-def cut_diff_psf(difference_psf):
+def cut_diff_psf(difference_psf, size=25):
     real_part = np.real(difference_psf)
     center = np.array(real_part.shape) / 2
     centered_psf = np.roll(real_part, center.astype(int), (0, 1))
-    
-    #ny, nx = centered_psf.shape
-    #center = (nx // 2, ny // 2)
-    #cutout = Cutout2D(centered_psf, position=center, size=(25, 25))
-    return centered_psf#cutout.data
+
+    cutout = Cutout2D(centered_psf, position=tuple(center.astype(int)), size=size)
+    return cutout.data
 
 def assemble_reference(refdatas, wcs, shape, ref_global_bkg=0, parallel=True):
     """
@@ -266,6 +264,13 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, normalize='sci
     difference = calculate_difference_image(science, reference, show=show, max_iterations=max_iterations, sigma_cut=sigma_cut, gain_ratio=gain_ratio, percent=percent, use_pixels=use_pixels, size_cut=size_cut)
     difference_zero_point = calculate_difference_image_zero_point(science, reference)
     normalized_difference = normalize_difference_image(difference, difference_zero_point, science, reference, normalize)
+    # The difference image has its own PSF (ZOGY eq. 17), not the science PSF.
+    diff_psf = cut_diff_psf(calculate_difference_psf(science, reference, difference_zero_point),
+                            size=sci_psf.data.shape)
+    psf_kind = 'difference'
+    if not np.all(np.isfinite(diff_psf)):
+        logger.warning('difference PSF is not finite; falling back to the science PSF')
+        diff_psf, psf_kind = sci_psf.data, 'science'
     del science, reference, difference
     gc.collect()
     logger.info(f"Image subtraction completed successfully!")
@@ -274,7 +279,7 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, normalize='sci
         primary_hdu = fits.PrimaryHDU(normalized_difference, header=output_wcs.to_header())
         mask_data = np.array(combined_mask, dtype=np.uint8)
         mask_hdu = fits.ImageHDU(mask_data, name='MASK')
-        psf_data = sci_psf.data #cutout_difference_psf#
+        psf_data = diff_psf
         psf_hdu = fits.ImageHDU(psf_data, name='PSF')
         hdul = fits.HDUList([primary_hdu, mask_hdu, psf_hdu])
         hdul.writeto(output_filename, overwrite=True)
@@ -285,7 +290,8 @@ def perform_image_subtraction(scidata, refdata, sci_psf, ref_psf, normalize='sci
         normalized_difference.meta['normalize'] = normalize
         normalized_difference.meta['ref_zp'] = ref_zp
         normalized_difference.meta['sci_zp'] = sci_zp
-        return normalized_difference, sci_psf.data
+        normalized_difference.meta['psf'] = psf_kind
+        return normalized_difference, diff_psf
     else:
         return None
 
