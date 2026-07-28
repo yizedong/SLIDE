@@ -172,13 +172,9 @@ def download_decals_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     ccddata.meta['ref_zp'] = header.get('MAGZERO') #mag ZP
     return ccddata
 
-
 def download_decals_dr10_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     """
-    Download DECaLS DR10 coadded reference image directly from NERSC brick files.
-
-    Downloads the full brick from NERSC and cuts out a fov-sized region centred
-    on (ra, dec). Unlike DR9, DR10 includes i-band coverage.
+    Download DECam reference image from ls dr9.
 
     Parameters
     ----------
@@ -187,8 +183,7 @@ def download_decals_dr10_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     fov : float, optional
         Field of view in degrees (default: 0.2).
     filt : str, optional
-        Filter band: 'g', 'r', 'i', or 'z' (default: 'g').
-        Note: 'i'-band is new in DR10 and not available in DR9.
+        Filter band (default: 'g').
     saveas : str, optional
         Path to save combined FITS file (image + mask in HDUs).
 
@@ -197,39 +192,43 @@ def download_decals_dr10_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     CCDData
         Image data with mask and WCS.
     """
-    brickname = _find_dr10_brickname(ra, dec)
-    prefix = brickname[:3]
-    fname = f"legacysurvey-{brickname}-image-{filt}.fits.fz"
-    url = f"{_NERSC_BASE}/{prefix}/{brickname}/{fname}"
+    DEF_ACCESS_URL = "https://datalab.noirlab.edu/sia/ls_dr10"
+    svc_des_dr2 = sia.SIAService(DEF_ACCESS_URL)
+    imgTable = svc_des_dr2.search((ra, dec), (fov / np.cos(np.radians(dec)), fov), verbosity=2).to_table()
 
-    response = requests.get(url, timeout=120)
+    # Filter for proper image entries
+    sel = (
+        (imgTable['proctype'].astype(str) == 'Stack') &
+        (imgTable['prodtype'].astype(str) == 'image') &
+        (startswith(imgTable['obs_bandpass'].astype(str), filt))
+    )
+    selected = imgTable[sel]
+    #if len(selected) < 2:
+    #    raise ValueError("Expected at least 2 rows (image + mask), but found fewer.")
+
+    # --- Science image ---
+    img_url = selected[0]['access_url']
+    response = requests.get(img_url)
     response.raise_for_status()
-
     with fits.open(BytesIO(response.content)) as hdul:
-        data = hdul[1].data.astype(np.float32)
-        header = hdul[1].header
+        data = hdul[0].data
+        header = hdul[0].header
 
-    wcs = WCS(header)
-    position = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
-    cutout = Cutout2D(data, position, u.Quantity((fov, fov), u.deg),
-                      wcs=wcs, mode='partial', fill_value=np.nan)
-
-    data = cutout.data
-    wcs = cutout.wcs
-    mask_data = (data == 0) | ~np.isfinite(data)
+    # --- Mask ---
+    mask_data = (data == 0).astype(bool)
 
     # --- Save combined FITS file if requested ---
     if saveas:
-        hdu_image = fits.PrimaryHDU(data=data, header=wcs.to_header())
-        hdu_mask = fits.ImageHDU(data=mask_data.astype(np.uint8), name='MASK')
+        hdu_image = fits.PrimaryHDU(data=data, header=header)
+        hdu_mask = fits.ImageHDU(data=mask_data.astype(np.uint8), name='mask')  # Save mask as 0/1 integers
         fits.HDUList([hdu_image, hdu_mask]).writeto(saveas, overwrite=True)
 
     # --- Create CCDData ---
-    ccddata = CCDData(data, wcs=wcs, unit='adu', mask=mask_data)
-    ccddata.meta['SATURATE'] = header.get('SATURATE', 65535)
-    ccddata.meta['ref_zp'] = header.get('MAGZERO', 22.5)
+    ccddata = CCDData(data, wcs=WCS(header), unit='adu', mask=mask_data)
+    ccddata.meta['SATURATE'] = header.get('SATURATE', 65535) #not sure how to get the correct saturation level for ld dr9
+    ccddata.meta['ref_zp'] = header.get('MAGZERO') #mag ZP
     return ccddata
-
+    
 
 def gaia3cat_old(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_limit=50, nrows=500):
     """

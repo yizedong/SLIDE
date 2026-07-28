@@ -259,13 +259,13 @@ def refine_multiple_stars(image, wcs, catalog, box_size=25, fwhm=5.0, threshold=
                 continue
 
             # Choose nearest star to center
-            dx = sources['xcentroid'] - box_size/2
-            dy = sources['ycentroid'] - box_size/2
+            dx = sources['x_centroid'] - box_size/2
+            dy = sources['y_centroid'] - box_size/2
             distances = np.hypot(dx, dy)
             idx = np.argmin(distances)
 
-            x_refined = sources['xcentroid'][idx] + cutout.origin_original[0]
-            y_refined = sources['ycentroid'][idx] + cutout.origin_original[1]
+            x_refined = sources['x_centroid'][idx] + cutout.origin_original[0]
+            y_refined = sources['y_centroid'][idx] + cutout.origin_original[1]
             #refined_xy_list.append((x_refined, y_refined))
             refined_xy['x'].append(x_refined)
             refined_xy['y'].append(y_refined)

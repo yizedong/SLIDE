@@ -23,9 +23,9 @@ from astropy.nddata import Cutout2D
 from astropy.wcs.utils import fit_wcs_from_points
 
 
-def query_lsst_visits(butler, ra, dec, band, time1, time2):
+def query_lsst_visits(butler, ra, dec, band, time1=None, time2=None, image_type='visit'):
     """
-    Query LSST Butler for visit images within a time range and sky region.
+    Query LSST Butler for visit or coadd images within a sky region.
     
     Parameters
     ----------
@@ -41,6 +41,8 @@ def query_lsst_visits(butler, ra, dec, band, time1, time2):
         Start time
     time2 : astropy.time.Time
         End time
+    image_type : str
+        Image type: 'visit' or 'coadd'
         
     Returns
     -------
@@ -48,17 +50,31 @@ def query_lsst_visits(butler, ra, dec, band, time1, time2):
         Dataset references matching the criteria
     """
     #butler = Butler("dp1", collections="LSSTComCam/DP1")
-    time1 = Time(time1, format="isot", scale="tai")
-    time2 = Time(time2, format="isot", scale="tai")
-    timespan = Timespan(time1, time2)
-    
-    dataset_refs = butler.query_datasets("visit_image",
-                                         where="band.name = :band AND \
-                                         visit.timespan OVERLAPS :timespan AND \
-                                         visit_detector_region.region OVERLAPS POINT(:ra, :dec)",
-                                         bind={"band": band, "timespan": timespan,
-                                               "ra": ra, "dec": dec},
-                                         order_by=["visit.timespan.begin"])
+
+    if image_type == 'visit':
+        time1 = Time(time1, format="isot", scale="tai")
+        time2 = Time(time2, format="isot", scale="tai")
+        timespan = Timespan(time1, time2)
+        
+        dataset_refs = butler.query_datasets("visit_image",
+                                             where="band.name = :band AND \
+                                             visit.timespan OVERLAPS :timespan AND \
+                                             visit_detector_region.region OVERLAPS POINT(:ra, :dec)",
+                                             bind={"band": band, "timespan": timespan,
+                                                   "ra": ra, "dec": dec},
+                                             order_by=["visit.timespan.begin"])
+
+    elif image_type == 'coadd':
+        dataset_refs = butler.query_datasets("deep_coadd",
+                                             where="band.name = :band AND \
+                                             patch.region OVERLAPS POINT(:ra, :dec)",
+                                             bind={"band": band,
+                                                   "ra": ra, "dec": dec},
+                                             order_by=["tract", "patch"])
+
+    else:
+        raise ValueError("image_type must be 'visit' or 'coadd'")
+
     return dataset_refs
 
 def lsst_bad_mask(visit_image, mask_type = ['']):
@@ -261,6 +277,14 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000), mask_type = ["
     #header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     #wcs = WCS(header)
     wcs = lsst_refine_wcs_astropy(visit_image, n_points=10)
+    wcs = wcs.deepcopy()
+
+    # Convert the WCS to local NumPy-array coordinates.
+    xy0 = visit_image.getXY0()
+    x0 = xy0.getX()
+    y0 = xy0.getY()
+
+    wcs.wcs.crpix -= np.array([x0, y0])
         
     xcen, ycen = astropy_world_to_pixel(ra, dec, wcs)
 
@@ -301,7 +325,7 @@ def forced_phot(ra, dec, image, wcs, psf_data):
     #localbkg_estimator = LocalBackground(5, 10, bkgstat)
     psfphot = PSFPhotometry(psf_model, fit_shape,
                             aperture_radius=7,
-                            localbkg_estimator=None)
+                            local_bkg_estimator=None)
     try:
         phot = psfphot(image.data, init_params=init_params, mask=image.mask)
     except ValueError as e:
@@ -314,7 +338,7 @@ def forced_phot(ra, dec, image, wcs, psf_data):
         psf_model.y_0.fixed = True
         psfphot = PSFPhotometry(psf_model, fit_shape,
                             aperture_radius=7,
-                            localbkg_estimator=None)
+                            local_bkg_estimator=None)
         phot = psfphot(image.data, init_params=init_params, mask = image.mask)
     flux_njy = phot[0]['flux_fit']
     flux_err = phot[0]['flux_err']

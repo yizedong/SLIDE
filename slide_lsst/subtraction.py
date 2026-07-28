@@ -379,11 +379,16 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'tar
         if ra is None or dec is None:
             raise ValueError("RA and DEC must be provided when downloading DES template")
         _refdata = download_des_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
-        logger.info(f'DES template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
         if _refdata == None:
             logger.info(f'no DES images found; attempting to download decals templates at RA:{ra} DEC:{dec} in the {image_filter} band')
-            _refdata = download_decals_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
-            logger.info(f'decals DR9 template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
+            try:
+                _refdata = download_decals_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+                logger.info(f'decals DR9 template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
+            except:
+                _refdata = download_decals_dr10_reference(ra=reference_ra, dec=reference_dec, fov=max(nx, ny)*0.2/3600*1.5, filt=image_filter)
+                logger.info(f'decals DR10 template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
+        else:
+            logger.info(f'DES template downloaded at RA:{ra} DEC:{dec} in the {image_filter} band')
         if save_original_temp:
             _science_filename = os.path.join(workdir, science_filename.replace('.fits', '.oritemp.fits'))
             _refdata.write(_science_filename, overwrite=True)
@@ -439,4 +444,73 @@ def lsst_decam_data_load(visit_image, ra=None, dec=None, reference_center = 'tar
     refdata_aligned.meta['ref_global_bkg'] = ref_global_bkg
     return scidata, refdata_aligned, sci_psf, ref_psf
 
-    
+def lsst_decam_data_load_coadd(coadd_image, ra=None, dec=None, reference_center = 'target', science_filename = None, template_filename=None, user_decam_data=None, workdir='./', show=False, download_DES_temp=False, download_DECaLS_DR9_temp=False, download_DECaLS_DR10_temp=False, cutout=False, cutout_size=4000, get_median_sci_psf=True, make_sci_psf=False, reference_catalog='gaia', reference_mag1=17, reference_mag2=21, save_intermediate=False, save_original_temp=False, fit_distortion=None, refine_wcs_sci=False,
+                               refine_wcs_ref=False, mask_type = [], reprojection_parallel=True):
+    """
+    Perform image subtraction on an LSST coadd using DECam templates.
+    """
+    image_filter = coadd_image.band
+    coadd_exposure = coadd_image.to_legacy()
+
+    if science_filename is None:
+        tract = getattr(coadd_image, 'tract', 'unknown')
+        patch = getattr(coadd_image, 'patch', 'unknown')
+        science_filename = f'coadd_{tract}_{patch}_{image_filter}.fits'
+
+    if len(mask_type) == 0:
+        mask_type = [
+            "BAD", "SAT", "INTRP", "CR", "EDGE", "SUSPECT",
+            "NO_DATA", "SENSOR_EDGE", "CLIPPED", "CROSSTALK",
+            "UNMASKEDNAN", "STREAK"
+        ]
+
+    available_mask_planes = set(
+        coadd_exposure.mask.getMaskPlaneDict().keys()
+    )
+
+    unavailable_mask_planes = [
+        plane for plane in mask_type
+        if plane not in available_mask_planes
+    ]
+
+    if len(unavailable_mask_planes) > 0:
+        logger.info(
+            f'Ignoring unavailable coadd mask planes: '
+            f'{unavailable_mask_planes}'
+        )
+
+    mask_type = [
+        plane for plane in mask_type
+        if plane in available_mask_planes
+    ]
+
+    logger.info(f'Using coadd mask planes: {mask_type}')
+
+    return lsst_decam_data_load(
+        coadd_exposure,
+        ra=ra,
+        dec=dec,
+        reference_center=reference_center,
+        science_filename=science_filename,
+        template_filename=template_filename,
+        user_decam_data=user_decam_data,
+        workdir=workdir,
+        show=show,
+        download_DES_temp=download_DES_temp,
+        download_DECaLS_DR9_temp=download_DECaLS_DR9_temp,
+        download_DECaLS_DR10_temp=download_DECaLS_DR10_temp,
+        cutout=cutout,
+        cutout_size=cutout_size,
+        get_median_sci_psf=get_median_sci_psf,
+        make_sci_psf=make_sci_psf,
+        reference_catalog=reference_catalog,
+        reference_mag1=reference_mag1,
+        reference_mag2=reference_mag2,
+        save_intermediate=save_intermediate,
+        save_original_temp=save_original_temp,
+        fit_distortion=fit_distortion,
+        refine_wcs_sci=refine_wcs_sci,
+        refine_wcs_ref=refine_wcs_ref,
+        mask_type=mask_type,
+        reprojection_parallel=reprojection_parallel
+    )
