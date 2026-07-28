@@ -240,7 +240,8 @@ def lsst_refine_wcs_astropy(visit_image, n_points=10, projection='TAN', fit_dist
     matched_x = xx.ravel()
     matched_y = yy.ravel()
 
-    ra, dec = lsst_pixel_to_world(matched_x, matched_y, visit_image)
+    xy0 = visit_image.getXY0()
+    ra, dec = lsst_pixel_to_world(matched_x + xy0.getX(), matched_y + xy0.getY(), visit_image)
     
     sky_coords = SkyCoord(ra=ra, dec=dec, unit='deg')
     #matched_x, matched_y = lsst_world_to_pixel(catalog['ra'], catalog['dec'], visit_image)
@@ -277,14 +278,6 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000), mask_type = ["
     #header = fits.Header(visit_image.getWcs().getFitsMetadata().toDict())
     #wcs = WCS(header)
     wcs = lsst_refine_wcs_astropy(visit_image, n_points=10)
-    wcs = wcs.deepcopy()
-
-    # Convert the WCS to local NumPy-array coordinates.
-    xy0 = visit_image.getXY0()
-    x0 = xy0.getX()
-    y0 = xy0.getY()
-
-    wcs.wcs.crpix -= np.array([x0, y0])
         
     xcen, ycen = astropy_world_to_pixel(ra, dec, wcs)
 
@@ -300,7 +293,7 @@ def safe_cutout2d(visit_image, ra, dec, cutout_size=(2000, 2000), mask_type = ["
     pixel_center = (xcen, ycen)
     cutout = Cutout2D(data, position=pixel_center, size=cutout_size, wcs=wcs, mode='trim')
     cutout_mask = Cutout2D(mask, position=pixel_center, size=cutout_size, wcs=wcs, mode='trim')
-    
+
     ccddata = CCDData(cutout.data, wcs=cutout.wcs, unit='adu')
     ccddata.mask = cutout_mask.data
     ccddata.meta['SATURATE'] = SATURATE
