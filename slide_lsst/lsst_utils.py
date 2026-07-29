@@ -177,12 +177,18 @@ def lsst_visit_to_psf_median(visit_image, ra, dec, cutout=True, cutout_size=4000
         for dy in np.linspace(-cutout_size[1] / 2 + 13, cutout_size[1] / 2 - 13, sample_number):
             x_sample, y_sample = xcen + dx, ycen + dy
             xy = lsst.geom.Point2D(x_sample, y_sample)
-            psf_image = psf.computeImage(xy).getArray()
+            try:
+                psf_image = psf.computeImage(xy).getArray()
+            except Exception:
+                continue
             psf_stars.append(psf_image)
 
     if len(psf_stars) == 0:
         raise RuntimeError("No valid PSFs found in the region.")
 
+    shapes = [s.shape for s in psf_stars]
+    modal_shape = max(set(shapes), key=shapes.count)
+    psf_stars = [s for s in psf_stars if s.shape == modal_shape]
     # Stack and normalize
     stacked = np.median(np.stack(psf_stars, axis=0), axis=0)
     psf_final = stacked / np.sum(stacked)
@@ -318,7 +324,7 @@ def forced_phot(ra, dec, image, wcs, psf_data):
     #localbkg_estimator = LocalBackground(5, 10, bkgstat)
     psfphot = PSFPhotometry(psf_model, fit_shape,
                             aperture_radius=7,
-                            local_bkg_estimator=None)
+                            local_bkg_estimator=localbkg_estimator)
     try:
         phot = psfphot(image.data, init_params=init_params, mask=image.mask)
     except ValueError as e:
