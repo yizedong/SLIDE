@@ -11,7 +11,7 @@ from astropy.wcs import WCS
 from astropy.io import fits
 from io import BytesIO
 import warnings
-from pyvo.dal import sia
+from pyvo.dal import sia, TAPService
 from numpy.core.defchararray import startswith
 from astropy.coordinates import SkyCoord
 from astroquery.gaia import Gaia
@@ -230,7 +230,7 @@ def download_decals_dr10_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     return ccddata
     
 
-def gaia3cat_old(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_limit=50, nrows=500):
+def gaia3cat_old_1(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, pm_limit=50, nrows=500):
     """
     Query Gaia DR3 catalog for stars within a specified radius.
     
@@ -284,7 +284,7 @@ def gaia3cat_old(ra, dec, ccddata, band='r', radius_arcmin=10, mag_limit=16.5, p
     catalog = catalog[mask]
     return catalog
 
-def gaia3cat(ra, dec, ccddata=None, band='r', radius_arcmin=10, mag1=17, mag2=22, pm_limit=None, nrows=300):
+def gaia3cat_old(ra, dec, ccddata=None, band='r', radius_arcmin=10, mag1=17, mag2=22, pm_limit=None, nrows=300):
     """
     Query Gaia DR3 catalog using a rectangular (box) query for stars around a given sky position.
 
@@ -336,6 +336,90 @@ def gaia3cat(ra, dec, ccddata=None, band='r', radius_arcmin=10, mag1=17, mag2=22
         mask &= total_pm < pm_limit
 
     catalog = catalog[mask]
+
+    # Clip to CCD footprint if ccddata is provided
+    if ccddata is not None:
+        nx, ny = ccddata.shape
+        x, y = astropy_world_to_pixel(catalog['ra'], catalog['dec'], ccddata.wcs)
+        margin = 25 // 2
+        spatial_mask = (x > margin) & (x < nx - margin) & (y > margin) & (y < ny - margin)
+        catalog = catalog[spatial_mask]
+
+    return catalog
+
+def gaia3cat(ra, dec, ccddata=None, band='r', radius_arcmin=10, mag1=17, mag2=22, pm_limit=None, nrows=300):
+    """
+    Query Gaia DR3 from the NOIRLab Data Lab TAP service instead of the ESA archive.
+
+    Parameters
+    ----------
+    ra : float
+        Right ascension in degrees.
+    dec : float
+        Declination in degrees.
+    ccddata : CCDData, optional
+        If provided, stars outside the CCD frame will be excluded.
+    band : str, optional
+        Observing band to choose Gaia magnitude column ('bp', 'rp', or 'g'). Default: 'r' -> 'rp'.
+    radius_arcmin : float, optional
+        Search box half-size in arcminutes (default: 10). Width is declination-corrected.
+    mag1, mag2 : float, optional
+        Magnitude range to include (default: 17 to 22).
+    pm_limit : float or None, optional
+        If given, exclude sources with total proper motion above this value (mas/yr).
+    nrows : int, optional
+        Maximum number of rows to keep, closest to (ra, dec) first (default: 300).
+
+    Returns
+    -------
+    catalog : astropy.table.Table
+        Filtered Gaia catalog, with 'ra' and 'dec' columns.
+    """
+    # Choose Gaia magnitude column based on band
+    if band in ['u', 'g']:
+        mag_column = 'phot_bp_mean_mag'
+    elif band in ['r', 'i', 'z']:
+        mag_column = 'phot_rp_mean_mag'
+    else:
+        mag_column = 'phot_g_mean_mag'
+
+    half_dec = radius_arcmin / 60.0
+    half_ra = half_dec / np.cos(np.radians(dec))
+
+    # Data Lab's TAP does not take the ADQL geometry functions, so cut on ra/dec
+    # directly and split the range when the box straddles ra = 0.
+    dec1, dec2 = dec - half_dec, dec + half_dec
+    ra1, ra2 = ra - half_ra, ra + half_ra
+    if ra1 < 0 or ra2 > 360:
+        ra_cut = f'(ra >= {ra1 % 360} OR ra <= {ra2 % 360})'
+    else:
+        ra_cut = f'ra BETWEEN {ra1} AND {ra2}'
+
+    columns = ('ra, dec, phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag, '
+               'pmra, pmdec, astrometric_excess_noise_sig')
+    query = f"""
+    SELECT {columns}
+    FROM gaia_dr3.gaia_source
+    WHERE {ra_cut}
+      AND dec BETWEEN {dec1} AND {dec2}
+      AND {mag_column} BETWEEN {mag1} AND {mag2}
+      AND astrometric_excess_noise_sig < 2
+    """
+    catalog = TAPService('https://datalab.noirlab.edu/tap').search(query).to_table()
+
+    if len(catalog) == 0:
+        warnings.warn('No Gaia DR3 sources found for the given box.', AstropyUserWarning)
+        return catalog
+
+    if pm_limit is not None:
+        total_pm = np.hypot(catalog['pmra'], catalog['pmdec'])
+        catalog = catalog[total_pm < pm_limit]
+
+    # Data Lab cannot sort by distance in the query, so keep the nearest nrows here
+    if len(catalog) > nrows:
+        separation = SkyCoord(ra, dec, unit='deg').separation(
+            SkyCoord(catalog['ra'], catalog['dec'], unit='deg'))
+        catalog = catalog[np.argsort(separation)[:nrows]]
 
     # Clip to CCD footprint if ccddata is provided
     if ccddata is not None:
