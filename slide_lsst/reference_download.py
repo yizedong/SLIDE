@@ -3,6 +3,7 @@ Reference image downloading utilities for LSST DECam image subtraction.
 """
 
 import gzip
+import re
 import numpy as np
 import requests
 from astropy.table import Table
@@ -50,6 +51,28 @@ def _find_dr10_brickname(ra, dec):
     return hits['BRICKNAME'][0].strip()
 
 
+def _sia_search(access_url, ra, dec, fov, min_search_fov):
+    """Run an SIA positional search with a box wide enough to hit the tiling."""
+    search_fov = max(fov, min_search_fov)
+    return sia.SIAService(access_url).search(
+        (ra, dec), (search_fov / np.cos(np.radians(dec)), search_fov), verbosity=2
+    ).to_table()
+
+
+def _nearest_image(table, ra, dec):
+    """Keep only rows from the tile/brick whose centre is closest to (ra, dec)."""
+    sep = SkyCoord(ra, dec, unit='deg').separation(
+        SkyCoord(table['s_ra'], table['s_dec'], unit='deg')).deg
+    return table[sep == sep.min()]
+
+
+def _set_cutout(access_url, ra, dec, fov):
+    """Rewrite the server-side cutout POS/SIZE back to the requested fov."""
+    access_url = re.sub(r'POS=[^&]*', f'POS={ra},{dec}', access_url)
+    return re.sub(r'SIZE=[^&]*',
+                  f'SIZE={fov / np.cos(np.radians(dec))},{fov}', access_url)
+
+
 def download_des_reference(ra, dec, fov=0.2, filt='g', saveas=None):
     """
     Download DECam reference image and mask from NOIRLab Data Lab and optionally save to a single FITS file.
@@ -71,8 +94,7 @@ def download_des_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         Image data with mask and WCS.
     """
     DEF_ACCESS_URL = "https://datalab.noirlab.edu/sia/des_dr2"
-    svc_des_dr2 = sia.SIAService(DEF_ACCESS_URL)
-    imgTable = svc_des_dr2.search((ra, dec), (fov / np.cos(np.radians(dec)), fov), verbosity=2).to_table()
+    imgTable = _sia_search(DEF_ACCESS_URL, ra, dec, fov, 0.8)  # DES tiles are 0.73 deg
     if len(imgTable) == 0:
         warnings.warn("No image entries found for given coordinates in DES.", AstropyUserWarning)
         return None
@@ -83,12 +105,12 @@ def download_des_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         (imgTable['prodtype'].astype(str) == 'image') &
         (startswith(imgTable['obs_bandpass'].astype(str), filt))
     )
-    selected = imgTable[sel]
+    selected = _nearest_image(imgTable[sel], ra, dec) if sel.any() else imgTable[sel]
     if len(selected) < 2:
         raise ValueError("Expected at least 2 rows (image + mask), but found fewer.")
 
     # --- Science image ---
-    img_url = selected[0]['access_url']
+    img_url = _set_cutout(selected[0]['access_url'], ra, dec, fov)
     response = requests.get(img_url)
     response.raise_for_status()
     with fits.open(BytesIO(response.content)) as hdul:
@@ -96,7 +118,7 @@ def download_des_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         header = hdul[0].header
 
     # --- Mask ---
-    mask_url = selected[1]['access_url']
+    mask_url = _set_cutout(selected[1]['access_url'], ra, dec, fov)
     response = requests.get(mask_url)
     response.raise_for_status()
     with fits.open(BytesIO(response.content)) as hdul:
@@ -136,8 +158,7 @@ def download_decals_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         Image data with mask and WCS.
     """
     DEF_ACCESS_URL = "https://datalab.noirlab.edu/sia/coadd/ls_dr9"
-    svc_des_dr2 = sia.SIAService(DEF_ACCESS_URL)
-    imgTable = svc_des_dr2.search((ra, dec), (fov / np.cos(np.radians(dec)), fov), verbosity=2).to_table()
+    imgTable = _sia_search(DEF_ACCESS_URL, ra, dec, fov, 0.3)  # bricks are 0.25 deg
 
     # Filter for proper image entries
     sel = (
@@ -146,11 +167,13 @@ def download_decals_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         (startswith(imgTable['obs_bandpass'].astype(str), filt))
     )
     selected = imgTable[sel]
-    #if len(selected) < 2:
-    #    raise ValueError("Expected at least 2 rows (image + mask), but found fewer.")
+    if len(selected) == 0:
+        raise ValueError(
+            f'No DECaLS DR9 {filt}-band coverage at RA={ra}, Dec={dec}.')
+    selected = _nearest_image(selected, ra, dec)
 
     # --- Science image ---
-    img_url = selected[0]['access_url']
+    img_url = _set_cutout(selected[0]['access_url'], ra, dec, fov)
     response = requests.get(img_url)
     response.raise_for_status()
     with fits.open(BytesIO(response.content)) as hdul:
@@ -193,8 +216,7 @@ def download_decals_dr10_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         Image data with mask and WCS.
     """
     DEF_ACCESS_URL = "https://datalab.noirlab.edu/sia/ls_dr10"
-    svc_des_dr2 = sia.SIAService(DEF_ACCESS_URL)
-    imgTable = svc_des_dr2.search((ra, dec), (fov / np.cos(np.radians(dec)), fov), verbosity=2).to_table()
+    imgTable = _sia_search(DEF_ACCESS_URL, ra, dec, fov, 0.3)  # bricks are 0.25 deg
 
     # Filter for proper image entries
     sel = (
@@ -203,11 +225,13 @@ def download_decals_dr10_reference(ra, dec, fov=0.2, filt='g', saveas=None):
         (startswith(imgTable['obs_bandpass'].astype(str), filt))
     )
     selected = imgTable[sel]
-    #if len(selected) < 2:
-    #    raise ValueError("Expected at least 2 rows (image + mask), but found fewer.")
+    if len(selected) == 0:
+        raise ValueError(
+            f'No DECaLS DR10 {filt}-band coverage at RA={ra}, Dec={dec}.')
+    selected = _nearest_image(selected, ra, dec)
 
     # --- Science image ---
-    img_url = selected[0]['access_url']
+    img_url = _set_cutout(selected[0]['access_url'], ra, dec, fov)
     response = requests.get(img_url)
     response.raise_for_status()
     with fits.open(BytesIO(response.content)) as hdul:
